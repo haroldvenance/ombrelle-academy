@@ -10,9 +10,16 @@ type Props = {
   activeColor?: "brand" | "accent";
 };
 
-export default function NavLink({ href, label, icon, badge, activeColor = "brand" }: Props) {
+export default function NavLink({
+  href,
+  label,
+  icon,
+  badge,
+  activeColor = "brand",
+}: Props) {
   const pathname = usePathname();
-  const active = pathname === href || (href !== "/" && pathname.startsWith(href + "/"));
+  const active =
+    pathname === href || (href !== "/" && pathname.startsWith(href + "/"));
   const activeCls =
     activeColor === "accent"
       ? "bg-accent-50 text-accent-700"
@@ -23,13 +30,18 @@ export default function NavLink({ href, label, icon, badge, activeColor = "brand
       href={href}
       aria-current={active ? "page" : undefined}
       className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors ${
-        active ? activeCls : "text-slate-700 hover:bg-slate-100 hover:text-slate-900"
+        active
+          ? activeCls
+          : "text-slate-700 hover:bg-slate-100 hover:text-slate-900"
       }`}
     >
-      {icon}
+      <span aria-hidden="true">{icon}</span>
       <span>{label}</span>
       {badge ? (
-        <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-semibold text-white">
+        <span
+          aria-label={`${badge} notification${badge > 1 ? "s" : ""} non lue${badge > 1 ? "s" : ""}`}
+          className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-semibold text-white"
+        >
           {badge > 99 ? "99+" : badge}
         </span>
       ) : null}

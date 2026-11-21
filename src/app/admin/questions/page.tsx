@@ -1,14 +1,24 @@
 import { createClient } from "@/lib/supabase/server";
 import QuestionBank from "@/components/admin/QuestionBank";
-import { Search } from "lucide-react";
 
-export default async function Questions() {
+export default async function Questions({
+  searchParams,
+}: {
+  searchParams: { fid?: string };
+}) {
   const supabase = createClient();
-  
-  const [{ data: questions }, { data: formations }] = await Promise.all([
-    supabase.from("questions").select("id, question_text, question_type, difficulty, tags, formation_id").order("created_at", { ascending: false }).limit(200),
-    supabase.from("formations").select("id, title"),
+
+  const [{ data: formations }, { data: allQuestions }] = await Promise.all([
+    supabase.from("formations").select("id, title").order("title"),
+    supabase
+      .from("questions")
+      .select("id, question_text, question_type, difficulty, tags, formation_id")
+      .order("created_at", { ascending: false })
+      .limit(500),
   ]);
+
+  const fid = searchParams.fid ?? formations?.[0]?.id ?? null;
+  const questions = (allQuestions ?? []).filter((q) => q.formation_id === fid);
 
   return (
     <div className="space-y-6">
@@ -19,7 +29,11 @@ export default async function Questions() {
         </div>
       </div>
 
-      <QuestionBank questions={questions ?? []} formations={formations ?? []} />
+      <QuestionBank
+        questions={questions}
+        formations={formations ?? []}
+        selectedFid={fid}
+      />
     </div>
   );
 }

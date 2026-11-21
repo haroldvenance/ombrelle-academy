@@ -1,86 +1,285 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { Mail, Loader2, AlertCircle, CheckCircle2, ArrowLeft } from "lucide-react";
+import {
+  Mail,
+  Loader2,
+  AlertCircle,
+  ArrowLeft,
+  KeyRound,
+  RotateCcw,
+  CheckCircle2,
+} from "lucide-react";
+
+type Step = "email" | "code";
 
 export default function Forgot() {
-  const [email, setEmail] = useState(""); 
-  const [sent, setSent] = useState(false); 
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const router = useRouter();
+  const supabase = createClient();
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  const [step, setStep] = useState<Step>("email");
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+
+  // Déjà connecté → dashboard
+  useEffect(() => {
+    supabase.auth
+      .getUser()
+      .then(({ data }) => {
+        if (data.user) router.replace("/dashboard");
+      })
+      .catch(() => {});
+  }, [router, supabase]);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
+
+  async function sendCode(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (busy || cooldown > 0) return;
+    if (!email.trim()) return;
+
     setBusy(true);
     setError(null);
-    
-    const { error } = await createClient().auth.resetPasswordForEmail(email, { 
-      redirectTo: `${window.location.origin}/auth/callback?next=/reinitialiser` 
+    setInfo(null);
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}/auth/callback?next=/reinitialiser`,
     });
-    
+
     setBusy(false);
-    if (error) setError(error.message); 
-    else setSent(true);
+    if (error) {
+      if (error.status === 429) {
+        setError("Trop de demandes. Réessayez dans une minute.");
+        setCooldown(60);
+      } else {
+        setError(error.message);
+      }
+      return;
+    }
+
+    setStep("code");
+    setInfo(`Un code à 6 chiffres a été envoyé à ${email}. Il expire dans quelques minutes.`);
+    setCooldown(60);
   }
 
-  if (sent) {
-    return (
-      <div className="space-y-6 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100">
-          <CheckCircle2 className="h-6 w-6 text-emerald-600" />
-        </div>
-        <div>
-          <h2 className="text-lg font-semibold text-slate-900">Email envoyé</h2>
-          <p className="text-sm text-slate-600 mt-2">
-            Si un compte existe pour <strong>{email}</strong>, un lien de réinitialisation vient d'être envoyé.
-          </p>
-        </div>
-        <Link href="/connexion" className="w-full inline-flex justify-center rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 transition-colors">
-          Retour à la connexion
-        </Link>
-      </div>
-    );
+  async function resend() {
+    if (resending || cooldown > 0) return;
+    setResending(true);
+    setError(null);
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}/auth/callback?next=/reinitialiser`,
+    });
+
+    setResending(false);
+    if (error) {
+      if (error.status === 429) {
+        setError("Trop de demandes. Réessayez dans une minute.");
+        setCooldown(60);
+      } else {
+        setError(error.message);
+      }
+      return;
+    }
+    setCooldown(60);
+  }
+
+  async function verifyCode(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    if (code.trim().length < 6) {
+      setError("Le code doit contenir 6 chiffres.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+
+    const { error } = await supabase.auth.verifyOtp({
+      email: email.trim(),
+      token: code.trim(),
+      type: "recovery",
+    });
+
+    setBusy(false);
+    if (error) {
+      const m = error.message.toLowerCase();
+      if (m.includes("expired")) {
+        setError("Ce code a expiré. Cliquez sur « Renvoyer un code ».");
+      } else if (m.includes("invalid") || m.includes("token") || m.includes("otp")) {
+        setError("Code incorrect. Vérifiez les 6 chiffres reçus par email.");
+      } else {
+        setError(error.message);
+      }
+      return;
+    }
+
+    // Session récupérée → on redirige vers le formulaire de nouveau mot de passe
+    router.push("/reinitialiser");
+    router.refresh();
   }
 
   return (
-    <form onSubmit={submit} className="space-y-6">
+    <form
+      onSubmit={step === "email" ? sendCode : verifyCode}
+      className="space-y-6"
+      aria-busy={busy}
+    >
       <div>
-        <Link href="/connexion" className="inline-flex items-center text-sm font-medium text-slate-500 hover:text-slate-900 mb-4 transition-colors">
+        <Link
+          href="/connexion"
+          className="inline-flex items-center text-sm font-medium text-slate-500 hover:text-slate-900 mb-4 transition-colors"
+        >
           <ArrowLeft className="h-4 w-4 mr-1" /> Retour
         </Link>
         <h1 className="text-xl font-semibold text-slate-900">Mot de passe oublié</h1>
-        <p className="text-sm text-slate-500 mt-1">Entrez votre email pour recevoir un lien de réinitialisation.</p>
+        <p className="text-sm text-slate-500 mt-1">
+          {step === "email"
+            ? "Entrez votre email pour recevoir un code de vérification."
+            : "Saisissez le code à 6 chiffres reçu par email."}
+        </p>
       </div>
 
+      {info && step === "code" && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="rounded-lg bg-emerald-50 p-3 flex items-start gap-2 border border-emerald-100"
+        >
+          <CheckCircle2 className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
+          <p className="text-sm text-emerald-700 break-all">{info}</p>
+        </div>
+      )}
+
       {error && (
-        <div className="rounded-lg bg-red-50 p-3 flex items-start gap-2 border border-red-100">
+        <div
+          role="alert"
+          aria-live="polite"
+          className="rounded-lg bg-red-50 p-3 flex items-start gap-2 border border-red-100"
+        >
           <AlertCircle className="h-4 w-4 text-red-600 mt-0.5 shrink-0" />
           <p className="text-sm text-red-700">{error}</p>
         </div>
       )}
 
-      <div>
-        <label className="block text-sm font-medium text-slate-700 mb-1">Adresse email</label>
-        <div className="relative">
-          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <input 
-            className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-2 text-sm focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 transition-colors" 
-            type="email" 
-            required 
-            placeholder="vous@exemple.com"
-            value={email} 
-            onChange={(e) => setEmail(e.target.value)} 
-          />
-        </div>
-      </div>
+      {step === "email" ? (
+        <>
+          <div>
+            <label htmlFor="forgot-email" className="block text-sm font-medium text-slate-700 mb-1">
+              Adresse email
+            </label>
+            <div className="relative">
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <input
+                id="forgot-email"
+                className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-2 text-sm focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 transition-colors"
+                type="email"
+                autoComplete="email"
+                required
+                placeholder="vous@exemple.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={busy}
+                autoFocus
+              />
+            </div>
+          </div>
 
-      <button 
-        disabled={busy}
-        className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-      >
-        {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Envoi...</> : "Envoyer le lien de réinitialisation"}
-      </button>
+          <button
+            type="submit"
+            disabled={busy}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          >
+            {busy ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" /> Envoi...
+              </>
+            ) : (
+              "Recevoir le code"
+            )}
+          </button>
+        </>
+      ) : (
+        <>
+          <div>
+            <label htmlFor="forgot-code" className="block text-sm font-medium text-slate-700 mb-1">
+              Code de vérification
+            </label>
+            <div className="relative">
+              <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <input
+                id="forgot-code"
+                className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-3 text-lg font-mono tracking-[0.4em] text-center focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 transition-colors"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                autoComplete="one-time-code"
+                required
+                placeholder="000000"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                disabled={busy}
+                autoFocus
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={busy || code.length < 6}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          >
+            {busy ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" /> Vérification...
+              </>
+            ) : (
+              "Vérifier le code"
+            )}
+          </button>
+
+          <div className="flex items-center justify-between gap-2 pt-2 text-sm">
+            <button
+              type="button"
+              onClick={() => {
+                setStep("email");
+                setCode("");
+                setError(null);
+                setInfo(null);
+              }}
+              className="text-slate-500 hover:text-slate-800 inline-flex items-center gap-1"
+              disabled={busy}
+            >
+              <ArrowLeft className="h-3.5 w-3.5" /> Changer d'email
+            </button>
+            <button
+              type="button"
+              onClick={resend}
+              disabled={resending || cooldown > 0 || busy}
+              className="text-indigo-600 hover:text-indigo-500 inline-flex items-center gap-1 disabled:opacity-50"
+            >
+              {resending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RotateCcw className="h-3.5 w-3.5" />
+              )}
+              {cooldown > 0 ? `Renvoyer dans ${cooldown}s` : "Renvoyer un code"}
+            </button>
+          </div>
+        </>
+      )}
     </form>
   );
 }

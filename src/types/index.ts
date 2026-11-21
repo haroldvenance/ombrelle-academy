@@ -40,7 +40,8 @@ export type Profile = {
 };
 
 // ─── Formation ──────────────────────────────────────────────────
-export type FormationStatus = "draft" | "published" | "archived";
+// Aligné sur le CHECK SQL : draft | review | published | archived
+export type FormationStatus = "draft" | "review" | "published" | "archived";
 export type Difficulty = "beginner" | "intermediate" | "advanced";
 export type LearningMode = "classic" | "interactive" | "intensive";
 
@@ -51,7 +52,6 @@ export type Formation = {
   description: string | null;
   category: string | null;
   cover_url: string | null;
-  cover_image: string | null;
   price: number;
   currency: string;
   difficulty: Difficulty;
@@ -65,7 +65,7 @@ export type Formation = {
 };
 
 // ─── Leçon ──────────────────────────────────────────────────────
-export type LessonStatus = "draft" | "published" | "archived";
+export type LessonStatus = "draft" | "review" | "published" | "archived";
 
 export type Lesson = {
   id: string;
@@ -83,7 +83,19 @@ export type Lesson = {
 };
 
 // ─── Activité / Quiz ────────────────────────────────────────────
-export type ActivityType = "quiz" | "match" | "order" | "simulation";
+// Aligné sur le CHECK SQL (11 types autorisés).
+export type ActivityType =
+  | "quiz"
+  | "true_false"
+  | "multiple_choice"
+  | "single_choice"
+  | "matching"
+  | "sorting"
+  | "fill_blank"
+  | "challenge"
+  | "simulation"
+  | "exercise"
+  | "memory";
 
 export type Activity = {
   id: string;
@@ -93,7 +105,7 @@ export type Activity = {
   title: string;
   description: string | null;
   type: ActivityType;
-  status: "draft" | "published" | "archived";
+  status: "draft" | "review" | "published" | "archived";
   xp_reward: number;
   configuration: {
     passing_score?: number;
@@ -104,13 +116,8 @@ export type Activity = {
 };
 
 // ─── Question ───────────────────────────────────────────────────
-export type QuestionType =
-  | "single_choice"
-  | "multiple_choice"
-  | "true_false"
-  | "match"      // à venir
-  | "order"      // à venir
-  | "simulation"; // à venir
+// Aligné sur le CHECK SQL : 3 types pour l'instant (autres prévus)
+export type QuestionType = "single_choice" | "multiple_choice" | "true_false";
 
 export type QuestionDifficulty = "easy" | "medium" | "hard";
 
@@ -138,17 +145,23 @@ export type Question = {
 };
 
 // ─── Paiement ───────────────────────────────────────────────────
+// Aligné sur le CHECK SQL : snake_case.
 export type PaymentStatus = "pending" | "paid" | "failed" | "refunded";
-export type PaymentMethod = "Orange Money" | "MTN MoMo" | "Virement bancaire" | "Espèces" | "Autre";
+export type PaymentMethod =
+  | "orange_money"
+  | "mtn_momo"
+  | "bank_transfer"
+  | "cash"
+  | "other";
 
 export type Payment = {
   id: string;
-  enrollment_id: string;
-  user_id: string;
+  enrollment_id: string | null; // NULL si le compte étudiant a été supprimé
+  user_id: string | null;       // NULL si le compte étudiant a été supprimé
   amount: number;
   currency: string;
   status: PaymentStatus;
-  payment_method: PaymentMethod | string;
+  payment_method: PaymentMethod;
   transaction_reference: string | null;
   proof_url: string | null;
   admin_comment: string | null;
@@ -157,7 +170,7 @@ export type Payment = {
 };
 
 // ─── Inscription ────────────────────────────────────────────────
-export type EnrollmentStatus = "pending" | "active" | "completed" | "cancelled";
+export type EnrollmentStatus = "pending" | "active" | "suspended" | "completed" | "cancelled";
 
 export type Enrollment = {
   id: string;
@@ -165,7 +178,7 @@ export type Enrollment = {
   formation_id: string;
   status: EnrollmentStatus;
   learning_mode: LearningMode;
-  payment_status: PaymentStatus;
+  payment_status: PaymentStatus | "partially_paid";
   enrolled_at: string;
   completed_at: string | null;
 };

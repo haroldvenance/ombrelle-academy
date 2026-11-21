@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   CheckCircle2, XCircle, AlertCircle, Brain, Lightbulb, Zap, ArrowLeft,
-  ArrowRight, Check, Circle, CircleDot, Square, Loader2, RotateCcw,
+  ArrowRight, Check, Circle, CircleDot, Square, Loader2, RotateCcw, Eye,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { formatRelative } from "@/lib/utils";
+import ProgressBar from "./ProgressBar";
 
 type Option = { id: string; text: string };
 type Question = {
@@ -20,10 +21,11 @@ type Question = {
 };
 
 type AnswerResult = {
-  is_correct: boolean;
-  correct_option_ids: string[];
-  selected_option_ids: string[];
-  explanation: string | null;
+  skipped?: boolean;
+  is_correct: boolean | null;
+  correct_option_ids?: string[];
+  selected_option_ids?: string[];
+  explanation?: string | null;
   next_review_at: string;
   mastery_score: number;
   xp_awarded: number;
@@ -51,7 +53,9 @@ export default function ReviewSession() {
     setResult(null);
     setStats({ correct: 0, wrong: 0, xp: 0 });
 
-    const { data, error } = await createClient().rpc("get_review_session", { p_limit: 20 });
+    const { data, error } = await createClient().rpc("get_review_session", {
+      p_limit: 20,
+    });
     if (error) {
       setError(error.message);
       setPhase("intro");
@@ -63,51 +67,93 @@ export default function ReviewSession() {
     setPhase((payload.questions ?? []).length > 0 ? "intro" : "done");
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const q = questions[idx];
 
-  function toggle(optId: string) {
-    if (result) return;
-    if (q.type === "multiple_choice") {
-      setSelected((p) => (p.includes(optId) ? p.filter((x) => x !== optId) : [...p, optId]));
-    } else {
-      setSelected([optId]);
-    }
-  }
+  const toggle = useCallback(
+    (optId: string) => {
+      if (result || !q) return;
+      if (q.type === "multiple_choice") {
+        setSelected((p) =>
+          p.includes(optId) ? p.filter((x) => x !== optId) : [...p, optId]
+        );
+      } else {
+        setSelected([optId]);
+      }
+    },
+    [q, result]
+  );
 
-  async function submit() {
-    if (selected.length === 0) return;
-    setSubmitting(true);
-    setError(null);
-    const { data, error } = await createClient().rpc("submit_review_answer", {
-      p_question: q.id,
-      p_selected: selected,
-    });
-    setSubmitting(false);
-    if (error) { setError(error.message); return; }
-    const r = data as AnswerResult;
-    setResult(r);
-    setStats((s) => ({
-      correct: s.correct + (r.is_correct ? 1 : 0),
-      wrong: s.wrong + (r.is_correct ? 0 : 1),
-      xp: s.xp + (r.xp_awarded ?? 0),
-    }));
-    router.refresh();
-  }
+  const submitWith = useCallback(
+    async (selection: string[]) => {
+      if (submitting || !q) return;
+      setSubmitting(true);
+      setError(null);
 
-  function next() {
+      const { data, error } = await createClient().rpc("submit_review_answer", {
+        p_question: q.id,
+        p_selected: selection,
+      });
+      setSubmitting(false);
+      if (error) {
+        setError(error.message);
+        return;
+      }
+      const r = data as AnswerResult;
+      setResult(r);
+      if (!r.skipped) {
+        setStats((s) => ({
+          correct: s.correct + (r.is_correct ? 1 : 0),
+          wrong: s.wrong + (r.is_correct ? 0 : 1),
+          xp: s.xp + (r.xp_awarded ?? 0),
+        }));
+      }
+      router.refresh();
+    },
+    [q, submitting, router]
+  );
+
+  const next = useCallback(() => {
     setSelected([]);
     setResult(null);
     if (idx + 1 >= questions.length) setPhase("done");
     else setIdx(idx + 1);
-  }
+  }, [idx, questions.length]);
+
+  // Raccourcis clavier en mode playing
+  useEffect(() => {
+    if (phase !== "playing") return;
+    function onKey(e: KeyboardEvent) {
+      if (!q) return;
+      if (result) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          next();
+        }
+        return;
+      }
+      const n = parseInt(e.key, 10);
+      if (n >= 1 && n <= q.options.length) {
+        e.preventDefault();
+        toggle(q.options[n - 1].id);
+      }
+      if (e.key === "Enter" && selected.length > 0) {
+        e.preventDefault();
+        submitWith(selected);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [phase, q, result, selected, toggle, submitWith, next]);
 
   // ── LOADING ─────────────────────────────────────────────────
   if (phase === "loading") {
     return (
       <div className="card flex items-center gap-2 text-slate-500">
-        <Loader2 className="h-4 w-4 animate-spin" /> Chargement de la session…
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Chargement de la session…
       </div>
     );
   }
@@ -116,17 +162,17 @@ export default function ReviewSession() {
   if (error && questions.length === 0) {
     return (
       <div className="card text-red-700">
-        <p className="flex items-center gap-2">
-          <AlertCircle className="h-4 w-4" /> {error}
+        <p role="alert" className="flex items-center gap-2">
+          <AlertCircle className="h-4 w-4" aria-hidden="true" /> {error}
         </p>
-        <button className="btn btn-secondary mt-3" onClick={load}>
-          <RotateCcw className="h-4 w-4" /> Réessayer
+        <button type="button" className="btn btn-secondary mt-3" onClick={load}>
+          <RotateCcw className="h-4 w-4" aria-hidden="true" /> Réessayer
         </button>
       </div>
     );
   }
 
-  // ── DONE (soit à l'issue de la session, soit paquet vide) ──
+  // ── DONE ────────────────────────────────────────────────────
   if (phase === "done") {
     const total = stats.correct + stats.wrong;
     const isFreshEmpty = total === 0;
@@ -134,13 +180,19 @@ export default function ReviewSession() {
     if (isFreshEmpty) {
       return (
         <div className="card py-12 text-center">
-          <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-500" />
-          <h2 className="mt-3 text-lg font-semibold text-slate-900">Aucune révision en attente</h2>
+          <CheckCircle2
+            className="mx-auto h-12 w-12 text-emerald-500"
+            aria-hidden="true"
+          />
+          <h2 className="mt-3 text-lg font-semibold text-slate-900">
+            Aucune révision en attente
+          </h2>
           <p className="mt-1 text-sm text-slate-600">
-            Toutes vos questions sont à jour. Continuez vos activités pour enrichir votre paquet.
+            Toutes vos questions sont à jour. Continuez vos activités pour enrichir votre
+            paquet.
           </p>
           <Link href="/dashboard" className="btn btn-primary mt-4">
-            <ArrowLeft className="h-4 w-4" /> Retour au tableau de bord
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Retour au tableau de bord
           </Link>
         </div>
       );
@@ -155,9 +207,9 @@ export default function ReviewSession() {
           }`}
         >
           {pct >= 70 ? (
-            <CheckCircle2 className="h-7 w-7 text-emerald-600" />
+            <CheckCircle2 className="h-7 w-7 text-emerald-600" aria-hidden="true" />
           ) : (
-            <AlertCircle className="h-7 w-7 text-amber-500" />
+            <AlertCircle className="h-7 w-7 text-amber-500" aria-hidden="true" />
           )}
         </div>
         <h2 className="text-xl font-semibold text-slate-900">Session terminée</h2>
@@ -176,24 +228,24 @@ export default function ReviewSession() {
           </div>
         </div>
         <div className="flex flex-wrap justify-center gap-2">
-          <button className="btn btn-secondary" onClick={load}>
-            <RotateCcw className="h-4 w-4" /> Nouvelle session
+          <button type="button" className="btn btn-secondary" onClick={load}>
+            <RotateCcw className="h-4 w-4" aria-hidden="true" /> Nouvelle session
           </button>
           <Link href="/dashboard" className="btn btn-primary">
-            <ArrowLeft className="h-4 w-4" /> Tableau de bord
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Tableau de bord
           </Link>
         </div>
       </div>
     );
   }
 
-  // ── INTRO ──────────────────────────────────────────────────
+  // ── INTRO ───────────────────────────────────────────────────
   if (phase === "intro") {
     const extra = totalDue - questions.length;
     return (
       <div className="card space-y-4 text-center">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-brand-50">
-          <Brain className="h-7 w-7 text-brand-700" />
+          <Brain className="h-7 w-7 text-brand-700" aria-hidden="true" />
         </div>
         <div>
           <h2 className="text-xl font-semibold text-slate-900">Session de révision</h2>
@@ -207,35 +259,51 @@ export default function ReviewSession() {
           </p>
         </div>
         <p className="mx-auto max-w-md text-sm text-slate-500">
-          Chaque bonne réponse repousse la prochaine révision. Une erreur remet la question à demain
-          — c&apos;est le principe même de la répétition espacée.
+          Chaque bonne réponse repousse la prochaine révision. Une erreur remet la question
+          à demain — c&apos;est le principe même de la répétition espacée.
         </p>
-        <button className="btn btn-primary mx-auto" onClick={() => setPhase("playing")}>
-          Commencer la session <ArrowRight className="h-4 w-4" />
+        <button
+          type="button"
+          className="btn btn-primary mx-auto"
+          onClick={() => setPhase("playing")}
+        >
+          Commencer la session <ArrowRight className="h-4 w-4" aria-hidden="true" />
         </button>
       </div>
     );
   }
 
-  // ── PLAYING ────────────────────────────────────────────────
+  // ── PLAYING ─────────────────────────────────────────────────
+  if (!q) {
+    return (
+      <div className="card">
+        Aucune question à réviser pour le moment.{" "}
+        <button type="button" className="underline" onClick={load}>
+          Recharger
+        </button>
+      </div>
+    );
+  }
+
   const isMulti = q.type === "multiple_choice";
   const last = idx + 1 === questions.length;
+  const showFeedback = !!result && !result.skipped;
 
   return (
     <div className="space-y-4">
       <div>
         <div className="mb-1 flex justify-between text-xs text-slate-500">
-          <span>Question {idx + 1}/{questions.length}</span>
+          <span>
+            Question {idx + 1}/{questions.length}
+          </span>
           <span className="inline-flex items-center gap-1">
-            <Brain className="h-3 w-3" /> Maîtrise {q.mastery_score}/4
+            <Brain className="h-3 w-3" aria-hidden="true" /> Maîtrise {q.mastery_score}/4
           </span>
         </div>
-        <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
-          <div
-            className="h-full bg-brand-600 transition-all"
-            style={{ width: `${((idx + (result ? 1 : 0)) / questions.length) * 100}%` }}
-          />
-        </div>
+        <ProgressBar
+          value={((idx + (result ? 1 : 0)) / questions.length) * 100}
+          label={`Progression de la session : question ${idx + 1} sur ${questions.length}`}
+        />
       </div>
 
       <div className="card space-y-4">
@@ -243,10 +311,11 @@ export default function ReviewSession() {
         {isMulti && <p className="text-xs text-slate-500">Plusieurs réponses possibles.</p>}
 
         <div className="space-y-2">
-          {q.options.map((o) => {
+          {q.options.map((o, i) => {
             const isSel = selected.includes(o.id);
-            const isCorrect = result?.correct_option_ids.includes(o.id) ?? false;
-            const showFeedback = !!result;
+            const isCorrect = showFeedback
+              ? (result?.correct_option_ids ?? []).includes(o.id)
+              : false;
 
             let cls = "border-slate-200 hover:bg-slate-50";
             if (showFeedback) {
@@ -260,6 +329,7 @@ export default function ReviewSession() {
             return (
               <button
                 key={o.id}
+                type="button"
                 onClick={() => toggle(o.id)}
                 disabled={!!result}
                 aria-pressed={isSel}
@@ -267,50 +337,81 @@ export default function ReviewSession() {
               >
                 {showFeedback ? (
                   isCorrect ? (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                    <CheckCircle2
+                      className="h-4 w-4 text-emerald-600"
+                      aria-hidden="true"
+                    />
                   ) : isSel ? (
-                    <XCircle className="h-4 w-4 text-red-600" />
+                    <XCircle className="h-4 w-4 text-red-600" aria-hidden="true" />
                   ) : isMulti ? (
-                    <Square className="h-4 w-4 text-slate-400" />
+                    <Square className="h-4 w-4 text-slate-400" aria-hidden="true" />
                   ) : (
-                    <Circle className="h-4 w-4 text-slate-400" />
+                    <Circle className="h-4 w-4 text-slate-400" aria-hidden="true" />
                   )
                 ) : isMulti ? (
-                  isSel ? <Check className="h-4 w-4 text-brand-700" /> : <Square className="h-4 w-4 text-slate-400" />
+                  isSel ? (
+                    <Check className="h-4 w-4 text-brand-700" aria-hidden="true" />
+                  ) : (
+                    <Square className="h-4 w-4 text-slate-400" aria-hidden="true" />
+                  )
                 ) : isSel ? (
-                  <CircleDot className="h-4 w-4 text-brand-700" />
+                  <CircleDot className="h-4 w-4 text-brand-700" aria-hidden="true" />
                 ) : (
-                  <Circle className="h-4 w-4 text-slate-400" />
+                  <Circle className="h-4 w-4 text-slate-400" aria-hidden="true" />
                 )}
-                <span>{o.text}</span>
+                <span className="flex-1">{o.text}</span>
+                <kbd className="hidden rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-mono text-slate-500 sm:inline">
+                  {i + 1}
+                </kbd>
               </button>
             );
           })}
         </div>
 
-        {result && (
+        {result && result.skipped && (
+          <div className="rounded-xl bg-slate-100 p-4 text-sm text-slate-700">
+            <p className="flex items-center gap-2 font-semibold">
+              <AlertCircle className="h-4 w-4" aria-hidden="true" /> Déjà révisée
+            </p>
+            <p className="mt-1 text-xs">
+              Cette question a été révisée dans une autre session. Elle sera reprogrammée
+              normalement.
+            </p>
+          </div>
+        )}
+
+        {showFeedback && (
           <div
+            role="status"
+            aria-live="polite"
             className={`rounded-xl p-4 text-sm ${
-              result.is_correct ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-800"
+              result!.is_correct
+                ? "bg-emerald-50 text-emerald-800"
+                : "bg-red-50 text-red-800"
             }`}
           >
             <p className="flex items-center gap-2 font-semibold">
-              {result.is_correct ? (
-                <><CheckCircle2 className="h-4 w-4" /> Bonne réponse</>
+              {result!.is_correct ? (
+                <>
+                  <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> Bonne réponse
+                </>
               ) : (
-                <><XCircle className="h-4 w-4" /> Réponse incorrecte</>
+                <>
+                  <XCircle className="h-4 w-4" aria-hidden="true" /> Réponse incorrecte
+                </>
               )}
             </p>
-            {result.explanation && (
+            {result!.explanation && (
               <p className="mt-2 flex gap-2">
-                <Lightbulb className="mt-0.5 h-4 w-4 shrink-0" /> {result.explanation}
+                <Lightbulb className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                {result!.explanation}
               </p>
             )}
             <p className="mt-2 text-xs opacity-80">
-              Prochaine révision : {formatRelative(result.next_review_at)}
-              {result.xp_awarded > 0 && (
+              Prochaine révision : {formatRelative(result!.next_review_at)}
+              {(result!.xp_awarded ?? 0) > 0 && (
                 <span className="ml-2 inline-flex items-center gap-1 font-semibold">
-                  <Zap className="h-3 w-3" /> +{result.xp_awarded} XP
+                  <Zap className="h-3 w-3" aria-hidden="true" /> +{result!.xp_awarded} XP
                 </span>
               )}
             </p>
@@ -319,27 +420,44 @@ export default function ReviewSession() {
       </div>
 
       {error && (
-        <p className="flex items-center gap-1.5 text-sm text-red-600">
-          <AlertCircle className="h-4 w-4" /> {error}
+        <p role="alert" className="flex items-center gap-1.5 text-sm text-red-600">
+          <AlertCircle className="h-4 w-4" aria-hidden="true" /> {error}
         </p>
       )}
 
-      <div className="flex justify-end">
+      <div className="flex justify-between gap-2">
         {!result ? (
-          <button
-            className="btn btn-primary"
-            disabled={selected.length === 0 || submitting}
-            onClick={submit}
-          >
-            {submitting ? (
-              <><Loader2 className="h-4 w-4 animate-spin" /> Validation…</>
-            ) : (
-              <><CheckCircle2 className="h-4 w-4" /> Valider</>
-            )}
-          </button>
+          <>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => submitWith([])}
+              disabled={submitting}
+              title="Révéler la réponse et considérer comme incorrecte"
+            >
+              <Eye className="h-4 w-4" aria-hidden="true" /> Voir la réponse
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={selected.length === 0 || submitting}
+              onClick={() => submitWith(selected)}
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Validation…
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> Valider
+                </>
+              )}
+            </button>
+          </>
         ) : (
-          <button className="btn btn-primary" onClick={next}>
-            {last ? "Terminer la session" : "Question suivante"} <ArrowRight className="h-4 w-4" />
+          <button type="button" className="btn btn-primary ml-auto" onClick={next}>
+            {last ? "Terminer la session" : "Question suivante"}{" "}
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </button>
         )}
       </div>

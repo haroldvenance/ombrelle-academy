@@ -1,6 +1,7 @@
 -- Données de référence (configurables par l'administrateur)
 insert into public.levels (level_number, name, required_xp) values
- (1,'Débutant',0),(2,'Explorateur',500),(3,'Apprenti',1500),(4,'Stratège',3000),(5,'Expert',5000),(6,'Maître',8000),(7,'Champion',12000)
+ (1,'Débutant',0),(2,'Explorateur',500),(3,'Apprenti',1500),(4,'Stratège',3000),
+ (5,'Expert',5000),(6,'Maître',8000),(7,'Champion',12000)
 on conflict (level_number) do nothing;
 
 insert into public.xp_rules (action, amount, description) values

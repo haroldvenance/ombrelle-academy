@@ -8,38 +8,86 @@ import Link from "next/link";
 
 export default function NewFormation() {
   const router = useRouter();
-  const [f, setF] = useState({ 
-    title: "", category: "Finance", price: "0", difficulty: "beginner", 
-    duration_days: "14", description: "", cover_url: "" 
+  const [f, setF] = useState({
+    title: "",
+    category: "Finance",
+    price: "0",
+    difficulty: "beginner",
+    duration_days: "14",
+    description: "",
+    cover_url: "",
   });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (loading) return;
     setLoading(true);
     setError(null);
+
+    if (!f.title.trim()) {
+      setError("Le titre est requis.");
+      setLoading(false);
+      return;
+    }
+
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
-    
-    const { data, error } = await supabase.from("formations").insert({
-      title: f.title, 
-      slug: slugify(f.title), 
-      category: f.category, 
-      price: Number(f.price), 
-      difficulty: f.difficulty,
-      duration_days: Number(f.duration_days), 
-      description: f.description, 
-      cover_url: f.cover_url,
-      created_by: user?.id,
-    }).select("id").single();
 
-    if (error) {
-      setError(error.message);
+    if (!user) {
+      setError("Session expirée. Reconnectez-vous.");
       setLoading(false);
-    } else {
-      router.push(`/admin/formations/${data.id}`);
+      return;
     }
+
+    const baseSlug = slugify(f.title) || "formation";
+    const payload = {
+      title: f.title.trim(),
+      category: f.category.trim(),
+      price: Number(f.price) || 0,
+      difficulty: f.difficulty,
+      duration_days: Number(f.duration_days) || 1,
+      description: f.description,
+      cover_url: f.cover_url.trim() || null,
+      created_by: user.id,
+      status: "draft" as const,
+    };
+
+    // Collision de slug : on suffixe -2, -3…
+    let createdId: string | null = null;
+    let lastErr: any = null;
+    for (let i = 0; i < 10; i++) {
+      const slug = i === 0 ? baseSlug : `${baseSlug}-${i + 1}`;
+      const { data, error } = await supabase
+        .from("formations")
+        .insert({ ...payload, slug })
+        .select("id")
+        .single();
+      if (!error) {
+        createdId = data.id;
+        break;
+      }
+      // 23505 = unique_violation
+      if (error.code === "23505" && /slug/i.test(error.message)) {
+        lastErr = error;
+        continue;
+      }
+      lastErr = error;
+      break;
+    }
+
+    if (!createdId) {
+      setError(
+        lastErr?.code === "23505"
+          ? "Une formation avec un titre similaire existe déjà. Modifiez légèrement le titre."
+          : lastErr?.message ?? "Erreur lors de la création."
+      );
+      setLoading(false);
+      return;
+    }
+
+    router.push(`/admin/formations/${createdId}`);
   }
 
   return (
@@ -59,25 +107,25 @@ export default function NewFormation() {
           <div className="grid gap-6">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Titre de la formation</label>
-              <input 
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900" 
-                required 
-                value={f.title} 
-                onChange={(e) => setF({ ...f, title: e.target.value })} 
+              <input
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                required
+                value={f.title}
+                onChange={(e) => setF({ ...f, title: e.target.value })}
                 placeholder="Ex: Maîtriser la Bourse BRVM"
               />
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
                 <ImageIcon className="h-4 w-4 text-slate-400" />
                 URL de l'image de couverture
               </label>
-              <input 
+              <input
                 type="url"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900" 
-                value={f.cover_url} 
-                onChange={(e) => setF({ ...f, cover_url: e.target.value })} 
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                value={f.cover_url}
+                onChange={(e) => setF({ ...f, cover_url: e.target.value })}
                 placeholder="https://exemple.com/image.jpg"
               />
               <p className="text-xs text-slate-500 mt-1">L'envoi direct de fichiers sera bientôt disponible.</p>
@@ -86,26 +134,27 @@ export default function NewFormation() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Catégorie</label>
-                <input 
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900" 
-                  value={f.category} 
-                  onChange={(e) => setF({ ...f, category: e.target.value })} 
+                <input
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                  value={f.category}
+                  onChange={(e) => setF({ ...f, category: e.target.value })}
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Prix de base (FCFA)</label>
-                <input 
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900" 
-                  type="number" min="0" 
-                  value={f.price} 
-                  onChange={(e) => setF({ ...f, price: e.target.value })} 
+                <input
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                  type="number"
+                  min="0"
+                  value={f.price}
+                  onChange={(e) => setF({ ...f, price: e.target.value })}
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Niveau requis</label>
-                <select 
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900" 
-                  value={f.difficulty} 
+                <select
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                  value={f.difficulty}
                   onChange={(e) => setF({ ...f, difficulty: e.target.value })}
                 >
                   <option value="beginner">Débutant</option>
@@ -115,49 +164,50 @@ export default function NewFormation() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Durée estimée (jours)</label>
-                <input 
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900" 
-                  type="number" min="1" 
-                  value={f.duration_days} 
-                  onChange={(e) => setF({ ...f, duration_days: e.target.value })} 
+                <input
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                  type="number"
+                  min="1"
+                  value={f.duration_days}
+                  onChange={(e) => setF({ ...f, duration_days: e.target.value })}
                 />
               </div>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Description</label>
-              <textarea 
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900" 
-                rows={4} 
-                value={f.description} 
-                onChange={(e) => setF({ ...f, description: e.target.value })} 
+              <textarea
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                rows={4}
+                value={f.description}
+                onChange={(e) => setF({ ...f, description: e.target.value })}
               />
             </div>
-            
+
             <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
               <div className="flex items-center gap-2 mb-2">
                 <CreditCard className="h-4 w-4 text-slate-500" />
                 <h3 className="text-sm font-medium text-slate-900">Plans de paiement fractionné</h3>
               </div>
-              <p className="text-xs text-slate-500 mb-3">Vous pourrez configurer les options de paiement en plusieurs fois après la création de la formation.</p>
-              <button type="button" disabled className="text-xs font-medium text-slate-400 bg-slate-200 px-3 py-1.5 rounded-md cursor-not-allowed">
-                Configurer les plans (Bientôt)
-              </button>
+              <p className="text-xs text-slate-500">
+                Vous pourrez configurer les options de paiement en plusieurs fois après la création de la formation.
+              </p>
             </div>
           </div>
-          
+
           {error && (
-            <div className="rounded-lg bg-red-50 p-3 border border-red-200">
+            <div role="alert" className="rounded-lg bg-red-50 p-3 border border-red-200">
               <p className="text-sm text-red-600">{error}</p>
             </div>
           )}
         </div>
-        
+
         <div className="border-t border-slate-200 bg-slate-50 px-6 py-4 flex items-center justify-end gap-3">
           <Link href="/admin/formations" className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900">
             Annuler
           </Link>
-          <button 
+          <button
+            type="submit"
             disabled={loading}
             className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50 transition-colors"
           >

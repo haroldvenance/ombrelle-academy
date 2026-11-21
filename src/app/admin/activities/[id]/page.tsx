@@ -1,12 +1,24 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import ActivityEditor from "@/components/admin/ActivityEditor";
+import { requireStaff } from "@/lib/auth";
 
 export default async function EditActivity({ params }: { params: { id: string } }) {
+  const { profile } = await requireStaff();
   const supabase = createClient();
-  const { data: a } = await supabase.from("activities").select("*").eq("id", params.id).maybeSingle();
-  
+
+  const { data: a } = await supabase
+    .from("activities")
+    .select("*, formations(created_by)")
+    .eq("id", params.id)
+    .maybeSingle();
+
   if (!a) notFound();
+
+  // Restriction : un instructeur ne peut éditer que les activités de ses formations
+  if (profile.role === "instructor" && a.formations?.created_by !== profile.id) {
+    redirect("/admin/formations");
+  }
 
   const [{ data: linked }, { data: bank }] = await Promise.all([
     supabase
@@ -22,10 +34,10 @@ export default async function EditActivity({ params }: { params: { id: string } 
   ]);
 
   return (
-    <ActivityEditor 
-      activity={a} 
-      linked={linked ?? []} 
-      bank={bank ?? []} 
+    <ActivityEditor
+      activity={a}
+      linked={linked ?? []}
+      bank={bank ?? []}
     />
   );
 }

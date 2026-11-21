@@ -49,9 +49,8 @@ export async function requireStaff(): Promise<StaffAuthContext> {
 export async function requireAdmin(): Promise<AdminAuthContext> {
   const c = await requireUser();
   if (isAdminRole(c.profile.role)) return c as AdminAuthContext;
-  // Un instructeur est redirigé vers son hub admin (où il a des droits limités)
-  // Un étudiant est redirigé vers son dashboard.
-  if (isStaffRole(c.profile.role)) redirect(REDIRECT.adminHome);
+  // Un instructeur reste sur son dashboard étudiant : /admin est réservé aux admins.
+  if (isStaffRole(c.profile.role)) redirect(REDIRECT.dashboard);
   redirect(REDIRECT.dashboard);
 }
 
@@ -59,7 +58,6 @@ export async function requireSuperAdmin(): Promise<AdminAuthContext & { profile:
   const c = await requireUser();
   if (c.profile.role !== "superadmin") {
     if (isAdminRole(c.profile.role)) redirect(REDIRECT.adminHome);
-    if (isStaffRole(c.profile.role)) redirect(REDIRECT.adminHome);
     redirect(REDIRECT.dashboard);
   }
   return c as any;

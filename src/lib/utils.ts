@@ -105,3 +105,11 @@ export const MODE_DESC: Record<string, string> = {
   interactive: "Contenu découpé, interactions fréquentes, défis et récompenses.",
   intensive: "Rythme accéléré : quiz supplémentaires, révisions régulières.",
 };
+
+export const PAYMENT_METHOD_LABEL: Record<string, string> = {
+  orange_money: "Airtel Money",
+  mtn_momo: "MTN MoMo",
+  bank_transfer: "Virement bancaire",
+  cash: "Espèces",
+  other: "Autre",
+};

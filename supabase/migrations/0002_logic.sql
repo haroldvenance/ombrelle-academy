@@ -1,8 +1,15 @@
 -- =====================================================================
 -- 0002_logic.sql : helpers, moteur de récompenses, RPC serveur
--- Toute la logique sensible (XP, correction, progression, paiements)
--- s'exécute ici, en SECURITY DEFINER. Le client ne peut jamais écrire
--- directement XP, score, progression, rôle ou statut d'accès.
+-- Corrections intégrées :
+--   - protect_profile : fix bypass via current_user (au lieu du flag settable)
+--   - sync_profile_email : trigger sur auth.users.email update
+--   - require_active_user() : check suspension
+--   - submit_activity : INSERT conditionnel + unique constraint
+--   - recompute_progress : sémentique stricte (tous modules = complete)
+--   - review_payment : garde-fou enrollment cancelled + user supprimé
+--   - submit_payment : validation paid_on future + existence preuve
+--   - delete_own_account() : RPC RGPD
+--   - award_xp : support montants négatifs (corrections)
 -- =====================================================================
 
 -- ---------- Helpers de rôles / accès ----------
@@ -34,6 +41,16 @@ language sql stable security definer set search_path = public as $$
     )
   ) $$;
 
+-- Garde-fou commun : bloque les RPC critiques pour compte suspendu
+create or replace function public.require_active_user() returns void
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if auth.uid() is null then raise exception 'Non authentifié'; end if;
+  if coalesce((select is_suspended from public.profiles where id = auth.uid()), false) then
+    raise exception 'Compte suspendu';
+  end if;
+end $$;
+
 -- ---------- Création de profil à l'inscription ----------
 create or replace function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -53,18 +70,39 @@ end $$;
 create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- Un utilisateur ne peut jamais modifier son rôle / suspension
-create or replace function public.protect_profile() returns trigger
+-- Sync email : garantit profiles.email = auth.users.email
+create or replace function public.sync_profile_email() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  if coalesce(current_setting('app.bypass_profile_guard', true), '') = '1' then return new; end if;
+  if new.email is distinct from old.email then
+    update public.profiles set email = new.email, updated_at = now() where id = new.id;
+  end if;
+  return new;
+end $$;
+
+create trigger on_auth_user_email_updated after update of email on auth.users
+  for each row execute function public.sync_profile_email();
+
+-- ---------- Protection des colonnes sensibles ----------
+-- NOTE : NE PAS rendre cette fonction SECURITY DEFINER.
+-- Sans SECURITY DEFINER, current_user reflète le contexte d'exécution réel :
+--   - 'authenticated' pour un UPDATE client direct → on bloque
+--   - 'postgres'/'service_role' pour un UPDATE via RPC SECURITY DEFINER → on autorise
+create or replace function public.protect_profile() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if current_user in ('postgres', 'supabase_admin', 'service_role') then
+    return new;
+  end if;
   if auth.uid() is not null then
     new.role := old.role;
     new.is_suspended := old.is_suspended;
     new.id := old.id;
+    new.email := old.email;
   end if;
   return new;
 end $$;
+
 create trigger trg_profiles_protect before update on public.profiles
   for each row execute function public.protect_profile();
 
@@ -136,24 +174,24 @@ begin
   end loop;
 end $$;
 
--- ---------- Moteur d'XP (idempotent) ----------
+-- ---------- Moteur d'XP (idempotent, autorise les corrections) ----------
 create or replace function public.award_xp(p_user uuid, p_amount int, p_reason text, p_source_type text,
                                            p_source_id uuid, p_key text, p_formation uuid default null)
 returns boolean language plpgsql security definer set search_path = public as $$
 declare v_id uuid; v_total int; v_old int; v_new int;
 begin
-  if p_amount is null or p_amount <= 0 then return false; end if;
+  if p_amount is null or p_amount = 0 then return false; end if;
   insert into public.user_stats(user_id) values (p_user) on conflict do nothing;
   insert into public.xp_transactions(user_id, amount, reason, source_type, source_id, formation_id, idempotency_key)
   values (p_user, p_amount, p_reason, p_source_type, p_source_id, p_formation, p_key)
   on conflict (idempotency_key) do nothing returning id into v_id;
   if v_id is null then return false; end if;
   select level_number into v_old from public.user_stats where user_id = p_user;
-  update public.user_stats set total_xp = total_xp + p_amount, updated_at = now()
+  update public.user_stats set total_xp = greatest(0, total_xp + p_amount), updated_at = now()
    where user_id = p_user returning total_xp into v_total;
   select coalesce(max(level_number),1) into v_new from public.levels where required_xp <= v_total;
   update public.user_stats set level_number = v_new where user_id = p_user;
-  if v_new > coalesce(v_old,1) then
+  if p_amount > 0 and v_new > coalesce(v_old,1) then
     perform public.notify(p_user, 'level_up', 'Niveau supérieur !', 'Tu viens d''atteindre le niveau ' || v_new, jsonb_build_object('level', v_new));
     perform public.log_event('LEVEL_UP', p_user, jsonb_build_object('level', v_new));
   end if;
@@ -206,7 +244,9 @@ begin
       perform public.award_xp(p_user, public.xp_rule('module_completed',150), 'Module terminé', 'module', m.id, 'module:' || p_user || ':' || m.id, p_formation);
       perform public.log_event('MODULE_COMPLETED', p_user, jsonb_build_object('module_id', m.id));
     end if;
-    if m.is_required and v_total > 0 and not v_complete then v_all := false; end if;
+    -- Sémantique stricte : TOUT module avec leçons publiées doit être complet.
+    -- (is_required gère les unlock rules, pas la complétion globale.)
+    if v_total > 0 and not v_complete then v_all := false; end if;
   end loop;
   if v_any and v_all then
     update public.enrollments set status = 'completed', completed_at = now() where id = v_enr and status = 'active';
@@ -224,7 +264,7 @@ create or replace function public.complete_lesson(p_lesson uuid) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid(); l public.lessons%rowtype; v_form uuid; v_enr uuid; v_amt int; v_awarded boolean;
 begin
-  if v_uid is null then raise exception 'Non authentifié'; end if;
+  perform public.require_active_user();
   select * into l from public.lessons where id = p_lesson and status = 'published';
   if not found then raise exception 'Leçon introuvable'; end if;
   select formation_id into v_form from public.formation_modules where id = l.module_id;
@@ -249,7 +289,7 @@ create or replace function public.get_activity_for_play(p_activity uuid) returns
 language plpgsql security definer set search_path = public as $$
 declare a public.activities%rowtype; v_cfg jsonb; v_shuf_q boolean; v_shuf_a boolean; v_att int; v_res jsonb;
 begin
-  if auth.uid() is null then raise exception 'Non authentifié'; end if;
+  perform public.require_active_user();
   select * into a from public.activities where id = p_activity and status = 'published';
   if not found then raise exception 'Activité introuvable'; end if;
   if not public.has_access(a.formation_id) then raise exception 'Accès refusé'; end if;
@@ -282,17 +322,28 @@ declare v_uid uuid := auth.uid(); a public.activities%rowtype; v_cfg jsonb; v_ma
   q record; v_sel uuid[]; v_cor uuid[]; v_ok boolean; v_pts numeric; v_score numeric := 0; v_max numeric := 0;
   v_results jsonb := '[]'::jsonb; v_pass int; v_passed boolean; v_pct numeric; v_xp int := 0; v_amt int; v_n int := 0;
 begin
-  if v_uid is null then raise exception 'Non authentifié'; end if;
+  perform public.require_active_user();
   select * into a from public.activities where id = p_activity and status = 'published';
   if not found then raise exception 'Activité introuvable'; end if;
   if not public.has_access(a.formation_id) then raise exception 'Accès refusé'; end if;
   v_cfg := coalesce(a.configuration, '{}');
   v_maxatt := nullif(v_cfg->>'max_attempts','')::int;
   select count(*) into v_att from public.activity_attempts where user_id = v_uid and activity_id = a.id;
-  if v_maxatt is not null and v_att >= v_maxatt then raise exception 'Nombre maximal de tentatives atteint'; end if;
   select id into v_enr from public.enrollments where user_id = v_uid and formation_id = a.formation_id and status in ('active','completed') limit 1;
-  insert into public.activity_attempts(user_id, activity_id, enrollment_id, attempt_number, answers)
-  values (v_uid, a.id, v_enr, v_att + 1, p_answers) returning id into v_attempt;
+
+  -- INSERT atomique : la contrainte unique (user_id, activity_id, attempt_number)
+  -- protège contre les double-clics / deux onglets.
+  begin
+    insert into public.activity_attempts(user_id, activity_id, enrollment_id, attempt_number, answers)
+    values (v_uid, a.id, v_enr, v_att + 1, p_answers) returning id into v_attempt;
+  exception when unique_violation then
+    raise exception 'Nombre maximal de tentatives atteint';
+  end;
+  if v_maxatt is not null and v_att >= v_maxatt then
+    -- cas rare de dépassement résiduel (course résolue par la contrainte) :
+    -- la contrainte a déjà bloqué, on ne passe jamais ici normalement
+    raise exception 'Nombre maximal de tentatives atteint';
+  end if;
 
   for q in select qu.*, coalesce(aq.points_override, qu.points) as pts
              from public.activity_questions aq join public.questions qu on qu.id = aq.question_id
@@ -318,8 +369,6 @@ begin
   v_pass := coalesce((v_cfg->>'passing_score')::int, 70);
   v_pct := case when v_max > 0 then round(v_score * 100 / v_max, 1) else 0 end;
   v_passed := v_max > 0 and v_pct >= v_pass;
-  update public.activity_attempts set score = v_score, max_score = v_max,
-         status = case when v_passed then 'passed' else 'failed' end, completed_at = now() where id = v_attempt;
 
   if v_passed then
     perform public.touch_streak(v_uid);
@@ -330,6 +379,13 @@ begin
       if public.award_xp(v_uid, v_amt, 'Score parfait : ' || a.title, 'activity_perfect', a.id, 'perfect:' || v_uid || ':' || a.id, a.formation_id) then v_xp := v_xp + v_amt; end if;
     end if;
   end if;
+
+  update public.activity_attempts
+    set score = v_score, max_score = v_max,
+        status = case when v_passed then 'passed' else 'failed' end,
+        completed_at = now(), xp_awarded = v_xp
+   where id = v_attempt;
+
   perform public.log_event('ACTIVITY_COMPLETED', v_uid, jsonb_build_object('activity_id', a.id, 'passed', v_passed, 'pct', v_pct));
   perform public.check_badges(v_uid);
   return jsonb_build_object('attempt_id', v_attempt, 'score', v_score, 'max_score', v_max, 'percentage', v_pct,
@@ -341,7 +397,7 @@ create or replace function public.enroll_in_formation(p_formation uuid, p_mode t
 language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid(); f public.formations%rowtype; v_id uuid;
 begin
-  if v_uid is null then raise exception 'Non authentifié'; end if;
+  perform public.require_active_user();
   if p_mode not in ('classic','interactive','intensive') then p_mode := 'classic'; end if;
   select * into f from public.formations where id = p_formation and status = 'published';
   if not found then raise exception 'Formation indisponible'; end if;
@@ -358,6 +414,7 @@ end $$;
 create or replace function public.set_learning_mode(p_enrollment uuid, p_mode text) returns void
 language plpgsql security definer set search_path = public as $$
 begin
+  perform public.require_active_user();
   if p_mode not in ('classic','interactive','intensive') then raise exception 'Mode invalide'; end if;
   update public.enrollments set learning_mode = p_mode where id = p_enrollment and user_id = auth.uid();
   if not found then raise exception 'Inscription introuvable'; end if;
@@ -368,13 +425,23 @@ create or replace function public.submit_payment(p_enrollment uuid, p_amount num
 returns uuid language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid(); e public.enrollments%rowtype; f public.formations%rowtype; v_id uuid;
 begin
-  if v_uid is null then raise exception 'Non authentifié'; end if;
+  perform public.require_active_user();
   select * into e from public.enrollments where id = p_enrollment and user_id = v_uid and status <> 'cancelled';
   if not found then raise exception 'Inscription introuvable'; end if;
   select * into f from public.formations where id = e.formation_id;
   if p_amount is null or p_amount <= 0 then raise exception 'Montant invalide'; end if;
   if coalesce(trim(p_reference),'') = '' or coalesce(trim(p_method),'') = '' then raise exception 'Référence et moyen de paiement requis'; end if;
-  if p_proof_url is not null and left(p_proof_url, length(v_uid::text) + 1) <> v_uid::text || '/' then raise exception 'Preuve invalide'; end if;
+  if p_paid_on is not null and p_paid_on > current_date then
+    raise exception 'La date de paiement ne peut pas être dans le futur';
+  end if;
+  if p_proof_url is not null then
+    if left(p_proof_url, length(v_uid::text) + 1) <> v_uid::text || '/' then
+      raise exception 'Preuve invalide';
+    end if;
+    if not exists (select 1 from storage.objects where bucket_id = 'payment-proofs' and name = p_proof_url) then
+      raise exception 'Fichier de preuve introuvable';
+    end if;
+  end if;
   begin
     insert into public.payments(user_id, enrollment_id, amount, currency, payment_method, transaction_reference, paid_on, proof_url)
     values (v_uid, e.id, p_amount, f.currency, trim(p_method), trim(p_reference), p_paid_on, p_proof_url) returning id into v_id;
@@ -402,10 +469,21 @@ language sql stable security definer set search_path = public as $$
     group by t.user_id)
   select rank() over (order by xp.s desc)::bigint, xp.user_id,
          coalesce(p.username, 'Étudiant'), xp.s::bigint, (xp.user_id = auth.uid())
-  from xp join public.profiles p on p.id = xp.user_id
+  from xp join public.profiles p on p.id = xp.user_id and p.is_suspended = false
   left join public.user_settings us on us.user_id = xp.user_id
   where auth.uid() is not null and (coalesce(us.leaderboard_visibility, true) or xp.user_id = auth.uid())
   order by xp.s desc limit least(p_limit, 200) $$;
+
+-- ---------- RGPD : suppression de compte ----------
+create or replace function public.delete_own_account() returns void
+language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid();
+begin
+  if v_uid is null then raise exception 'Non authentifié'; end if;
+  -- Les paiements sont anonymisés (SET NULL via FK) : ils restent dans l'audit
+  -- financier mais ne sont plus rattachés à l'utilisateur.
+  delete from auth.users where id = v_uid;
+end $$;
 
 -- ---------- RPC administration ----------
 create or replace function public.review_payment(p_payment uuid, p_approve boolean, p_comment text default null) returns void
@@ -417,12 +495,18 @@ begin
   if not found then raise exception 'Paiement introuvable'; end if;
   if p.status <> 'pending' then raise exception 'Paiement déjà traité'; end if;
   select * into e from public.enrollments where id = p.enrollment_id;
+  if not found then raise exception 'Inscription associée introuvable'; end if;
+  if e.status = 'cancelled' then
+    raise exception 'Impossible de traiter un paiement sur une inscription annulée';
+  end if;
   select * into f from public.formations where id = e.formation_id;
+
   if p_approve then
     update public.payments set status = 'paid', verified_by = auth.uid(), verified_at = now(), admin_comment = p_comment where id = p.id;
     select coalesce(sum(amount),0) into v_paid from public.payments where enrollment_id = e.id and status = 'paid';
     if v_paid >= f.price then
-      update public.enrollments set payment_status = 'paid', status = case when status in ('pending','suspended') then 'active' else status end where id = e.id;
+      update public.enrollments set payment_status = 'paid',
+             status = case when status in ('pending','suspended') then 'active' else status end where id = e.id;
     else
       update public.enrollments set payment_status = 'partially_paid',
              status = case when f.allow_partial_access and status = 'pending' then 'active' else status end where id = e.id;
@@ -430,10 +514,14 @@ begin
     update public.payment_installments set status = 'paid', paid_at = now()
       where enrollment_id = e.id and status <> 'paid' and
             (select coalesce(sum(i2.amount),0) from public.payment_installments i2 where i2.enrollment_id = e.id and i2.installment_number <= payment_installments.installment_number) <= v_paid;
-    perform public.notify(e.user_id, 'payment_verified', 'Paiement validé', f.title, jsonb_build_object('formation_id', f.id));
+    if e.user_id is not null then
+      perform public.notify(e.user_id, 'payment_verified', 'Paiement validé', f.title, jsonb_build_object('formation_id', f.id));
+    end if;
   else
     update public.payments set status = 'failed', verified_by = auth.uid(), verified_at = now(), admin_comment = p_comment where id = p.id;
-    perform public.notify(e.user_id, 'payment_rejected', 'Paiement refusé', coalesce(p_comment, f.title), jsonb_build_object('formation_id', f.id));
+    if e.user_id is not null then
+      perform public.notify(e.user_id, 'payment_rejected', 'Paiement refusé', coalesce(p_comment, f.title), jsonb_build_object('formation_id', f.id));
+    end if;
   end if;
   perform public.log_event('PAYMENT_VERIFIED', e.user_id, jsonb_build_object('payment_id', p.id, 'approved', p_approve));
 end $$;
@@ -453,11 +541,13 @@ begin
   return v_id;
 end $$;
 
+-- NOTE : le bypass via set_config a été retiré. protect_profile autorise
+-- maintenant les updates via current_user = 'postgres' (SECURITY DEFINER).
 create or replace function public.admin_set_suspended(p_user uuid, p_value boolean) returns void
 language plpgsql security definer set search_path = public as $$
 begin
   if not public.is_admin() then raise exception 'Réservé aux administrateurs'; end if;
-  perform set_config('app.bypass_profile_guard', '1', true);
+  if p_user = auth.uid() then raise exception 'Impossible de modifier son propre compte'; end if;
   update public.profiles set is_suspended = p_value where id = p_user and role <> 'superadmin';
 end $$;
 
@@ -465,9 +555,21 @@ create or replace function public.admin_set_role(p_user uuid, p_role text) retur
 language plpgsql security definer set search_path = public as $$
 begin
   if not public.is_superadmin() then raise exception 'Réservé au superadministrateur'; end if;
+  if p_user = auth.uid() then raise exception 'Impossible de modifier son propre rôle'; end if;
   if p_role not in ('student','instructor','admin','superadmin') then raise exception 'Rôle invalide'; end if;
-  perform set_config('app.bypass_profile_guard', '1', true);
   update public.profiles set role = p_role where id = p_user;
+end $$;
+
+create or replace function public.renumber_formation_modules(p_formation uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.can_manage_formation(p_formation) then raise exception 'Accès refusé'; end if;
+  with ordered as (
+    select id, row_number() over (order by position, created_at) as new_pos
+    from public.formation_modules where formation_id = p_formation
+  )
+  update public.formation_modules m set position = o.new_pos
+  from ordered o where m.id = o.id and m.position <> o.new_pos;
 end $$;
 
 create or replace function public.admin_stats() returns jsonb
@@ -499,7 +601,7 @@ language sql stable security definer set search_path = public as $$
   group by q.id, q.question_text having count(r.id) > 0
   order by 4 asc nulls last, 3 desc limit p_limit $$;
 
--- ---------- Vue publique : plan d'un cours (sans contenu) ----------
+-- ---------- Vue publique : plan d'un cours ----------
 create or replace view public.lesson_outline as
   select l.id, l.module_id, m.formation_id, l.title, l.slug, l.position, l.estimated_duration, l.xp_reward
   from public.lessons l
@@ -517,6 +619,9 @@ revoke all on function public.log_event(text,uuid,jsonb) from public, anon, auth
 revoke all on function public.notify(uuid,text,text,text,jsonb) from public, anon, authenticated;
 revoke all on function public.xp_rule(text,int) from public, anon, authenticated;
 revoke all on function public.handle_new_user() from public, anon, authenticated;
+revoke all on function public.sync_profile_email() from public, anon, authenticated;
+revoke all on function public.protect_profile() from public, anon, authenticated;
+revoke all on function public.require_active_user() from public, anon;
 
 revoke all on function public.complete_lesson(uuid) from public, anon;
 revoke all on function public.get_activity_for_play(uuid) from public, anon;
@@ -530,12 +635,20 @@ revoke all on function public.review_payment(uuid,boolean,text) from public, ano
 revoke all on function public.admin_grant_access(uuid,uuid) from public, anon;
 revoke all on function public.admin_set_suspended(uuid,boolean) from public, anon;
 revoke all on function public.admin_set_role(uuid,text) from public, anon;
+revoke all on function public.delete_own_account() from public, anon;
+revoke all on function public.renumber_formation_modules(uuid) from public, anon;
 revoke all on function public.admin_stats() from public, anon;
 revoke all on function public.question_stats(int) from public, anon;
-grant execute on function public.complete_lesson(uuid), public.get_activity_for_play(uuid), public.submit_activity(uuid,jsonb),
+
+grant execute on function
+  public.complete_lesson(uuid), public.get_activity_for_play(uuid), public.submit_activity(uuid,jsonb),
   public.enroll_in_formation(uuid,text), public.set_learning_mode(uuid,text), public.submit_payment(uuid,numeric,text,text,date,text),
-  public.mark_notifications_read(), public.get_leaderboard(text,uuid,int), public.review_payment(uuid,boolean,text),
-  public.admin_grant_access(uuid,uuid), public.admin_set_suspended(uuid,boolean), public.admin_set_role(uuid,text),
-  public.admin_stats(), public.question_stats(int) to authenticated;
+  public.mark_notifications_read(), public.get_leaderboard(text,uuid,int),
+  public.review_payment(uuid,boolean,text), public.admin_grant_access(uuid,uuid),
+  public.admin_set_suspended(uuid,boolean), public.admin_set_role(uuid,text),
+  public.delete_own_account(), public.renumber_formation_modules(uuid),
+  public.admin_stats(), public.question_stats(int)
+  to authenticated;
+
 grant execute on function public.is_staff(), public.is_admin(), public.is_superadmin(), public.has_access(uuid), public.current_role_name() to anon, authenticated;
 grant select on public.lesson_outline to anon, authenticated;

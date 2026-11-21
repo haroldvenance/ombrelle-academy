@@ -14,9 +14,9 @@ const DEFAULT_LEVELS: Level[] = [{ level_number: 1, name: "Débutant", required_
  * Calcule la progression d'un utilisateur dans la hiérarchie de niveaux.
  *
  * Robustesse :
- * - `levels` vide ou `null` → utilise un niveau par défaut.
+ * - `levels` vide ou null → utilise un niveau par défaut.
  * - `totalXp` négatif ou NaN → traité comme 0.
- * - `next = null` propre quand le joueur a atteint le niveau max.
+ * - `next` = null propre quand le joueur a atteint le niveau max.
  * - Division par zéro impossible (range <= 0 → pct = 100).
  */
 export function levelProgress(totalXp: number, levels: Level[]): LevelProgress {

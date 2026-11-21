@@ -1,26 +1,27 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { formatPrice } from "@/lib/utils";
-import { Users, Activity, BookOpen, Banknote, Clock, TrendingUp, CheckCircle, RefreshCw } from "lucide-react";
+import { Users, Activity, BookOpen, Banknote, Clock, TrendingUp, CheckCircle, RefreshCw, AlertTriangle } from "lucide-react";
 
 export default async function AdminHome() {
   const supabase = createClient();
-  const [{ data: s }, { data: qs }] = await Promise.all([
-    supabase.rpc("admin_stats"), 
-    supabase.rpc("question_stats", { p_limit: 5 })
+  const [{ data: s, error: statsError }, { data: qs, error: qsError }] = await Promise.all([
+    supabase.rpc("admin_stats"),
+    supabase.rpc("question_stats", { p_limit: 5 }),
   ]);
-  
+
   const st: any = s ?? {};
-  
+  const statsOk = !statsError;
+
   const cards = [
-    { label: "Étudiants", value: st.students ?? 0, icon: Users },
-    { label: "Inscriptions actives", value: st.active_enrollments ?? 0, icon: Activity },
-    { label: "Formations publiées", value: st.formations ?? 0, icon: BookOpen },
-    { label: "Revenus validés", value: formatPrice(st.revenue ?? 0), icon: Banknote },
-    { label: "Paiements en attente", value: st.pending_payments ?? 0, icon: Clock },
-    { label: "Progression moyenne", value: `${st.avg_progress ?? 0} %`, icon: TrendingUp },
-    { label: "Taux de complétion", value: `${st.completion_rate ?? 0} %`, icon: CheckCircle },
-    { label: "Actifs (7 derniers jours)", value: st.active_students_7d ?? 0, icon: RefreshCw },
+    { label: "Étudiants", value: statsOk ? st.students ?? 0 : "—", icon: Users },
+    { label: "Inscriptions actives", value: statsOk ? st.active_enrollments ?? 0 : "—", icon: Activity },
+    { label: "Formations publiées", value: statsOk ? st.formations ?? 0 : "—", icon: BookOpen },
+    { label: "Revenus validés", value: statsOk ? formatPrice(st.revenue ?? 0) : "—", icon: Banknote },
+    { label: "Paiements en attente", value: statsOk ? st.pending_payments ?? 0 : "—", icon: Clock },
+    { label: "Progression moyenne", value: statsOk ? `${st.avg_progress ?? 0} %` : "—", icon: TrendingUp },
+    { label: "Taux de complétion", value: statsOk ? `${st.completion_rate ?? 0} %` : "—", icon: CheckCircle },
+    { label: "Actifs (7 derniers jours)", value: statsOk ? st.active_students_7d ?? 0 : "—", icon: RefreshCw },
   ];
 
   return (
@@ -31,6 +32,16 @@ export default async function AdminHome() {
           <p className="text-sm text-slate-500 mt-1">Vue d'ensemble de l'activité de la plateforme.</p>
         </div>
       </div>
+
+      {statsError && (
+        <div role="alert" className="rounded-lg bg-amber-50 border border-amber-200 p-4 flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
+          <div className="text-sm text-amber-800">
+            <p className="font-medium">Certaines statistiques sont temporairement indisponibles.</p>
+            <p className="mt-0.5">Réessayez dans quelques instants. Les chiffres affichés peuvent être incomplets.</p>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((card) => (
@@ -44,7 +55,7 @@ export default async function AdminHome() {
         ))}
       </div>
 
-      {st.pending_payments > 0 && (
+      {statsOk && st.pending_payments > 0 && (
         <div className="rounded-lg bg-amber-50 border border-amber-200 p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Clock className="h-5 w-5 text-amber-600" />
@@ -52,7 +63,7 @@ export default async function AdminHome() {
               Vous avez <strong>{st.pending_payments}</strong> paiement(s) en attente de validation.
             </p>
           </div>
-          <Link href="/admin/payments" className="text-sm font-medium text-amber-700 hover:text-amber-900 underline">
+          <Link href="/admin/payments?status=pending" className="text-sm font-medium text-amber-700 hover:text-amber-900 underline">
             Vérifier maintenant
           </Link>
         </div>
@@ -64,7 +75,9 @@ export default async function AdminHome() {
             <h2 className="font-semibold text-slate-900">Questions les plus échouées</h2>
           </div>
           <div className="p-6">
-            {!(qs as any[])?.length ? (
+            {qsError ? (
+              <p className="text-sm text-amber-700">Impossible de charger les statistiques de questions.</p>
+            ) : !(qs as any[])?.length ? (
               <p className="text-sm text-slate-500">Aucune donnée disponible pour le moment.</p>
             ) : (
               <ul className="divide-y divide-slate-100">
@@ -81,15 +94,16 @@ export default async function AdminHome() {
           </div>
         </section>
 
-        {/* Section pour préparer les Quêtes & Défis */}
         <section className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           <div className="border-b border-slate-200 bg-slate-50 px-6 py-4 flex justify-between items-center">
             <h2 className="font-semibold text-slate-900">Moteur de révision espacée</h2>
             <span className="text-xs bg-slate-200 text-slate-700 px-2 py-1 rounded-full font-medium">Bêta</span>
           </div>
           <div className="p-6 flex flex-col items-center justify-center text-center h-48">
-             <RefreshCw className="h-8 w-8 text-slate-300 mb-3" />
-             <p className="text-sm text-slate-500 max-w-xs">Le module de révision espacée est prêt en base de données. L'interface de session sera disponible prochainement.</p>
+            <RefreshCw className="h-8 w-8 text-slate-300 mb-3" />
+            <p className="text-sm text-slate-500 max-w-xs">
+              Le module de révision espacée est prêt en base de données. L'interface de session sera disponible prochainement.
+            </p>
           </div>
         </section>
       </div>

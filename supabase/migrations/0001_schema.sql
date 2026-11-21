@@ -1,5 +1,17 @@
 -- =====================================================================
 -- OMBRELLE Academy — 0001_schema.sql : tables, contraintes, index
+-- Corrections intégrées :
+--   - cover_image → cover_url (aligné sur le code)
+--   - UNIQUE (parent, position) sur modules/lessons/activités/activity_questions
+--   - UNIQUE (user_id, activity_id, attempt_number) sur activity_attempts
+--   - UNIQUE (attempt_id, question_id) sur question_responses
+--   - payments.user_id et payments.enrollment_id nullable (on delete set null)
+--     → permet delete_own_account sans perdre l'audit financier
+--   - CHECK sur review_items.status, notifications.type, payments.payment_method
+--   - CHECK xp_transactions.amount <> 0 (autorise les corrections négatives)
+--   - activity_attempts.xp_awarded (traçabilité)
+--   - Timezone par défaut : Africa/Brazzaville
+--   - Index notifications non-lues
 -- =====================================================================
 create extension if not exists pgcrypto;
 
@@ -11,7 +23,8 @@ create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   full_name text, username text unique, email text, phone text, avatar_url text, country text,
   role text not null default 'student' check (role in ('student','instructor','admin','superadmin')),
-  bio text, timezone text not null default 'Africa/Douala',
+  bio text,
+  timezone text not null default 'Africa/Brazzaville',
   is_suspended boolean not null default false,
   created_at timestamptz not null default now(), updated_at timestamptz not null default now()
 );
@@ -41,7 +54,8 @@ create table public.formations (
   id uuid primary key default gen_random_uuid(),
   title text not null, slug text not null unique, description text,
   objectives jsonb not null default '[]', skills jsonb not null default '[]',
-  cover_image text, category text,
+  cover_url text,
+  category text,
   difficulty text not null default 'beginner' check (difficulty in ('beginner','intermediate','advanced')),
   duration_days integer, price numeric(12,2) not null default 0 check (price >= 0),
   currency text not null default 'XAF',
@@ -58,7 +72,8 @@ create table public.formation_modules (
   formation_id uuid not null references public.formations(id) on delete cascade,
   title text not null, description text, position integer not null default 0,
   is_required boolean not null default true, unlock_rule jsonb not null default '{}',
-  created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
+  constraint fm_unique_position unique (formation_id, position)
 );
 create index on public.formation_modules(formation_id, position);
 
@@ -74,7 +89,8 @@ create table public.lessons (
   created_by uuid references public.profiles(id) on delete set null,
   published_at timestamptz,
   created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
-  unique (module_id, slug)
+  unique (module_id, slug),
+  constraint lessons_unique_position unique (module_id, position)
 );
 create index on public.lessons(module_id, position);
 
@@ -84,18 +100,21 @@ create table public.activities (
   module_id uuid references public.formation_modules(id) on delete cascade,
   lesson_id uuid references public.lessons(id) on delete cascade,
   title text not null, description text,
-  type text not null default 'quiz' check (type in ('quiz','true_false','multiple_choice','single_choice','matching','sorting','fill_blank','challenge','simulation','exercise','memory')),
+  type text not null default 'quiz' check (type in (
+    'quiz','true_false','multiple_choice','single_choice','matching','sorting',
+    'fill_blank','challenge','simulation','exercise','memory'
+  )),
   configuration jsonb not null default '{}',
   difficulty text not null default 'medium' check (difficulty in ('easy','medium','hard')),
   xp_reward integer not null default 50 check (xp_reward >= 0),
   position integer not null default 0,
   status text not null default 'draft' check (status in ('draft','review','published','archived')),
-  created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
+  constraint activities_unique_position unique (formation_id, position)
 );
 create index on public.activities(formation_id);
 create index on public.activities(lesson_id);
 
--- Banque de questions (réutilisable) ; liée aux activités via activity_questions
 create table public.questions (
   id uuid primary key default gen_random_uuid(),
   formation_id uuid references public.formations(id) on delete cascade,
@@ -124,7 +143,8 @@ create table public.activity_questions (
   activity_id uuid not null references public.activities(id) on delete cascade,
   question_id uuid not null references public.questions(id) on delete cascade,
   position integer not null default 0, points_override integer,
-  unique (activity_id, question_id)
+  unique (activity_id, question_id),
+  constraint actq_unique_position unique (activity_id, position)
 );
 
 -- ---------- Inscriptions & paiements ----------
@@ -151,12 +171,15 @@ create table public.payment_plans (
   created_at timestamptz not null default now(), updated_at timestamptz not null default now()
 );
 
+-- payments : user_id et enrollment_id nullable (on delete set null)
+-- → permet delete_own_account() en conservant l'audit financier anonymisé.
 create table public.payments (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references public.profiles(id) on delete restrict,
-  enrollment_id uuid not null references public.enrollments(id) on delete restrict,
+  user_id uuid references public.profiles(id) on delete set null,
+  enrollment_id uuid references public.enrollments(id) on delete set null,
   amount numeric(12,2) not null check (amount > 0), currency text not null default 'XAF',
-  payment_method text not null, transaction_reference text not null,
+  payment_method text not null check (payment_method in ('orange_money','mtn_momo','bank_transfer','cash','other')),
+  transaction_reference text not null,
   status text not null default 'pending' check (status in ('pending','paid','failed','refunded')),
   proof_url text, paid_on date,
   verified_by uuid references public.profiles(id) on delete set null, verified_at timestamptz,
@@ -165,6 +188,7 @@ create table public.payments (
 );
 create unique index payments_unique_ref on public.payments(lower(payment_method), lower(transaction_reference)) where status <> 'failed';
 create index on public.payments(enrollment_id);
+create index on public.payments(user_id);
 
 create table public.payment_installments (
   id uuid primary key default gen_random_uuid(),
@@ -209,8 +233,10 @@ create table public.activity_attempts (
   attempt_number integer not null default 1, answers jsonb,
   score numeric(8,2) not null default 0, max_score numeric(8,2) not null default 0,
   status text not null default 'in_progress' check (status in ('in_progress','passed','failed')),
+  xp_awarded integer not null default 0,
   started_at timestamptz not null default now(), completed_at timestamptz,
-  created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
+  constraint attempts_unique unique (user_id, activity_id, attempt_number)
 );
 create index on public.activity_attempts(user_id, activity_id);
 
@@ -220,7 +246,8 @@ create table public.question_responses (
   question_id uuid not null references public.questions(id) on delete cascade,
   selected_options jsonb not null default '[]', is_correct boolean not null default false,
   points_awarded numeric(8,2) not null default 0, response_time integer,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  unique (attempt_id, question_id)
 );
 create index on public.question_responses(question_id);
 
@@ -240,7 +267,8 @@ create table public.app_settings (key text primary key, value jsonb not null);
 create table public.xp_transactions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
-  amount integer not null check (amount > 0), reason text not null,
+  amount integer not null check (amount <> 0),
+  reason text not null,
   source_type text, source_id uuid, formation_id uuid,
   idempotency_key text not null unique,
   created_at timestamptz not null default now()
@@ -335,14 +363,21 @@ create table public.leaderboard_snapshots (
   user_id uuid not null references public.profiles(id) on delete cascade,
   score integer not null default 0, rank integer not null, generated_at timestamptz not null default now()
 );
+create index on public.leaderboard_snapshots(period_type, period_start, rank);
 
 create table public.notifications (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
-  type text not null, title text not null, body text, payload jsonb not null default '{}',
+  type text not null check (type in (
+    'badge_earned','level_up','formation_completed','module_completed',
+    'enrollment','payment_submitted','payment_verified','payment_rejected',
+    'access_granted','challenge_won','quest_completed','system'
+  )),
+  title text not null, body text, payload jsonb not null default '{}',
   read_at timestamptz, created_at timestamptz not null default now()
 );
 create index on public.notifications(user_id, created_at desc);
+create index notifications_unread_idx on public.notifications(user_id) where read_at is null;
 
 create table public.review_items (
   id uuid primary key default gen_random_uuid(),
@@ -350,7 +385,7 @@ create table public.review_items (
   question_id uuid not null references public.questions(id) on delete cascade,
   mastery_score numeric(4,1) not null default 0, repetition_count integer not null default 0,
   last_reviewed_at timestamptz, next_review_at timestamptz not null default now(),
-  status text not null default 'active',
+  status text not null default 'active' check (status in ('active','suspended','mastered')),
   unique (user_id, question_id)
 );
 create index on public.review_items(user_id, next_review_at);

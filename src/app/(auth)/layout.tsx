@@ -1,13 +1,27 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Umbrella } from "lucide-react";
+
+export const metadata: Metadata = {
+  title: {
+    default: "OMBRELLE Academy",
+    template: "%s | OMBRELLE Academy",
+  },
+  description: "La plateforme EdTech pour réussir votre avenir financier.",
+};
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        <Link href="/" className="flex items-center justify-center gap-2 text-2xl font-bold text-slate-900 transition-opacity hover:opacity-80">
+        <Link
+          href="/"
+          className="flex items-center justify-center gap-2 text-2xl font-bold text-slate-900 transition-opacity hover:opacity-80"
+        >
           <Umbrella className="h-8 w-8 text-indigo-600" />
-          <span>OMBRELLE <span className="text-indigo-600">Academy</span></span>
+          <span>
+            OMBRELLE <span className="text-indigo-600">Academy</span>
+          </span>
         </Link>
         <h2 className="mt-2 text-center text-sm text-slate-500">
           La plateforme EdTech pour réussir votre avenir financier.

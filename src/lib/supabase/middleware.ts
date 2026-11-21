@@ -3,6 +3,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { env } from "@/lib/env";
 import { AUTH_PATHS, PROTECTED_PATHS, REDIRECT } from "@/lib/constants";
 
+/**
+ * Rafraîchit la session et applique les règles d'accès.
+ * - Non authentifié + route protégée → /connexion?next=…
+ * - Authentifié + page d'auth → /dashboard
+ * - Authentifié mais suspendu → /suspendu (sauf pages whitelistées)
+ */
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -37,6 +43,31 @@ export async function updateSession(request: NextRequest) {
     url.pathname = REDIRECT.dashboard;
     url.search = "";
     return NextResponse.redirect(url);
+  }
+
+  // Vérifie la suspension pour les utilisateurs connectés.
+  // On exclut les routes permettant de la constater / de se déconnecter.
+  if (user) {
+    const suspendedWhitelist =
+      path === "/suspendu" ||
+      path === "/connexion" ||
+      path === "/auth/callback" ||
+      path.startsWith("/_next");
+
+    if (!suspendedWhitelist) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("is_suspended")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (profile?.is_suspended) {
+        const url = request.nextUrl.clone();
+        url.pathname = REDIRECT.suspended;
+        url.search = "";
+        return NextResponse.redirect(url);
+      }
+    }
   }
 
   return response;

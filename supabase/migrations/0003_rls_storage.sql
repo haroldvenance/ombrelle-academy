@@ -1,8 +1,9 @@
 -- =====================================================================
 -- 0003_rls_storage.sql : Row Level Security + Storage
--- RLS activée sur TOUTES les tables du schéma public.
--- Aucune politique d'écriture pour les étudiants sur : XP, progression,
--- tentatives, inscriptions, paiements, badges... (RPC uniquement).
+-- Corrections intégrées :
+--   - payments_select : autorise admin même si user_id null (compte supprimé)
+--   - lesson-assets : isolation par formation via chemin {formation_id}/...
+--   - certificates : policy INSERT admin explicite
 -- =====================================================================
 do $$ declare t text; begin
   for t in select tablename from pg_tables where schemaname = 'public' loop
@@ -28,7 +29,6 @@ create policy modules_select on public.formation_modules for select
   using (public.is_staff() or exists (select 1 from public.formations f where f.id = formation_id and f.status = 'published'));
 create policy modules_staff on public.formation_modules for all using (public.is_staff()) with check (public.is_staff());
 
--- leçons : contenu réservé aux inscrits (le plan passe par la vue lesson_outline)
 create policy lessons_select on public.lessons for select
   using (public.is_staff() or (status = 'published' and exists (
     select 1 from public.formation_modules m where m.id = module_id and public.has_access(m.formation_id))));
@@ -38,7 +38,6 @@ create policy activities_select on public.activities for select
   using (public.is_staff() or (status = 'published' and public.has_access(formation_id)));
 create policy activities_staff on public.activities for all using (public.is_staff()) with check (public.is_staff());
 
--- questions / options : JAMAIS lisibles par les étudiants (is_correct protégé)
 create policy questions_staff on public.questions for all using (public.is_staff()) with check (public.is_staff());
 create policy options_staff on public.question_options for all using (public.is_staff()) with check (public.is_staff());
 create policy actq_staff on public.activity_questions for all using (public.is_staff()) with check (public.is_staff());
@@ -48,12 +47,16 @@ create policy enrollments_select on public.enrollments for select using (user_id
 create policy enrollments_admin on public.enrollments for all using (public.is_admin()) with check (public.is_admin());
 create policy plans_select on public.payment_plans for select using (is_active or public.is_staff());
 create policy plans_admin on public.payment_plans for all using (public.is_admin()) with check (public.is_admin());
-create policy payments_select on public.payments for select using (user_id = auth.uid() or public.is_admin());
+
+-- payments : user_id peut être NULL (compte supprimé) — admin voit tout
+create policy payments_select on public.payments for select
+  using (user_id = auth.uid() or public.is_admin());
+
 create policy installments_select on public.payment_installments for select
   using (public.is_admin() or exists (select 1 from public.enrollments e where e.id = enrollment_id and e.user_id = auth.uid()));
 create policy installments_admin on public.payment_installments for all using (public.is_admin()) with check (public.is_admin());
 
--- progression (lecture seule pour l'étudiant)
+-- progression
 create policy lp_select on public.lesson_progress for select using (user_id = auth.uid() or public.is_staff());
 create policy mp_select on public.module_progress for select using (user_id = auth.uid() or public.is_staff());
 create policy att_select on public.activity_attempts for select using (user_id = auth.uid() or public.is_staff());
@@ -100,8 +103,24 @@ create policy "avatars update own" on storage.objects for update using (bucket_i
 create policy "avatars delete own" on storage.objects for delete using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
 create policy "covers read" on storage.objects for select using (bucket_id = 'formation-covers');
 create policy "covers staff write" on storage.objects for all using (bucket_id = 'formation-covers' and public.is_staff()) with check (bucket_id = 'formation-covers' and public.is_staff());
-create policy "assets read enrolled" on storage.objects for select using (bucket_id = 'lesson-assets' and auth.uid() is not null);
-create policy "assets staff write" on storage.objects for all using (bucket_id = 'lesson-assets' and public.is_staff()) with check (bucket_id = 'lesson-assets' and public.is_staff());
+
+-- lesson-assets : isolation par formation via chemin {formation_id}/{asset}
+create policy "assets read enrolled" on storage.objects for select
+  using (
+    bucket_id = 'lesson-assets'
+    and auth.uid() is not null
+    and (storage.foldername(name))[1] ~ '^[0-9a-f]{8}-[0-9a-f]{4}'
+    and public.has_access(((storage.foldername(name))[1])::uuid)
+  );
+create policy "assets staff write" on storage.objects for all
+  using (bucket_id = 'lesson-assets' and public.is_staff())
+  with check (bucket_id = 'lesson-assets' and public.is_staff());
+
+-- proofs
 create policy "proofs insert own" on storage.objects for insert with check (bucket_id = 'payment-proofs' and (storage.foldername(name))[1] = auth.uid()::text);
 create policy "proofs read own or admin" on storage.objects for select using (bucket_id = 'payment-proofs' and ((storage.foldername(name))[1] = auth.uid()::text or public.is_admin()));
+
+-- certificates
 create policy "certs read own or admin" on storage.objects for select using (bucket_id = 'certificates' and ((storage.foldername(name))[1] = auth.uid()::text or public.is_admin()));
+create policy "certs admin insert" on storage.objects for insert with check (bucket_id = 'certificates' and public.is_admin());
+create policy "certs admin delete" on storage.objects for delete using (bucket_id = 'certificates' and public.is_admin());

@@ -1,27 +1,41 @@
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import StudentActions from "@/components/admin/StudentActions";
-import { formatDate } from "@/lib/utils";
 import { Search, ShieldAlert } from "lucide-react";
+import Link from "next/link";
 
-export default async function Students({ searchParams }: { searchParams: { q?: string } }) {
+export default async function Students({
+  searchParams,
+}: {
+  searchParams: { q?: string; page?: string };
+}) {
   const { profile } = await requireStaff();
   const supabase = createClient();
-  
+
+  const page = Math.max(1, parseInt(searchParams.page ?? "1", 10) || 1);
+  const pageSize = 50;
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
   let q = supabase
     .from("profiles")
-    .select("*, user_stats(total_xp, level_number), enrollments(id, status, formations(title))")
-    .order("created_at", { ascending: false })
-    .limit(100);
-    
+    .select(
+      "*, user_stats(total_xp, level_number), enrollments(id, status, formations(title))",
+      { count: "exact" }
+    );
+
   if (searchParams.q) {
-    q = q.or(`full_name.ilike.%${searchParams.q}%,email.ilike.%${searchParams.q}%`);
+    // Échappe les caractères spéciaux du parser PostgREST
+    const safe = searchParams.q.replace(/[%,()]/g, "");
+    q = q.or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%`);
   }
-  
-  const [{ data }, { data: formations }] = await Promise.all([
-    q, 
-    supabase.from("formations").select("id, title")
+
+  const [{ data, count }, { data: formations }] = await Promise.all([
+    q.order("created_at", { ascending: false }).range(from, to),
+    supabase.from("formations").select("id, title"),
   ]);
+
+  const totalPages = Math.max(1, Math.ceil((count ?? 0) / pageSize));
 
   return (
     <div className="space-y-6">
@@ -32,19 +46,17 @@ export default async function Students({ searchParams }: { searchParams: { q?: s
         </div>
       </div>
 
-      <div className="flex items-center gap-2 max-w-md">
+      <form className="flex items-center gap-2 max-w-md">
         <div className="relative w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <form>
-            <input 
-              name="q" 
-              defaultValue={searchParams.q} 
-              className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900" 
-              placeholder="Rechercher par nom ou email..." 
-            />
-          </form>
+          <input
+            name="q"
+            defaultValue={searchParams.q}
+            className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+            placeholder="Rechercher par nom ou email..."
+          />
         </div>
-      </div>
+      </form>
 
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
@@ -65,7 +77,9 @@ export default async function Students({ searchParams }: { searchParams: { q?: s
                     <div className="text-xs text-slate-500">{p.email}</div>
                   </td>
                   <td className="px-6 py-4">
-                    <div className="text-sm text-slate-900">{p.user_stats?.total_xp ?? 0} XP · Niveau {p.user_stats?.level_number ?? 1}</div>
+                    <div className="text-sm text-slate-900">
+                      {p.user_stats?.total_xp ?? 0} XP · Niveau {p.user_stats?.level_number ?? 1}
+                    </div>
                     <div className="text-xs text-slate-500 mt-0.5 line-clamp-1">
                       {(p.enrollments ?? []).map((e: any) => `${e.formations?.title} (${e.status})`).join(" · ") || "Aucune inscription"}
                     </div>
@@ -84,12 +98,13 @@ export default async function Students({ searchParams }: { searchParams: { q?: s
                   </td>
                   <td className="px-6 py-4 text-right">
                     {["admin", "superadmin"].includes(profile.role) && (
-                      <StudentActions 
-                        userId={p.id} 
-                        suspended={p.is_suspended} 
-                        role={p.role} 
-                        formations={formations ?? []} 
-                        canSetRole={profile.role === "superadmin"} 
+                      <StudentActions
+                        userId={p.id}
+                        currentUserId={profile.id}
+                        suspended={p.is_suspended}
+                        role={p.role}
+                        formations={formations ?? []}
+                        canSetRole={profile.role === "superadmin"}
                       />
                     )}
                   </td>
@@ -97,8 +112,13 @@ export default async function Students({ searchParams }: { searchParams: { q?: s
               ))}
               {!data?.length && (
                 <tr>
-                  <td colSpan={4} className="px-6 py-8 text-center text-slate-500">
-                    Aucun étudiant trouvé.
+                  <td colSpan={4} className="px-6 py-12 text-center text-slate-500">
+                    <p className="font-medium text-slate-700">Aucun étudiant trouvé</p>
+                    <p className="mt-1 text-sm">
+                      {searchParams.q
+                        ? <>Aucun résultat pour « {searchParams.q} ». <Link className="underline" href="/admin/students">Effacer la recherche</Link></>
+                        : <>Aucun compte enregistré pour le moment.</>}
+                    </p>
                   </td>
                 </tr>
               )}
@@ -106,6 +126,30 @@ export default async function Students({ searchParams }: { searchParams: { q?: s
           </table>
         </div>
       </div>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between text-sm text-slate-600">
+          <span>Page {page} sur {totalPages} · {count} étudiant(s)</span>
+          <div className="flex gap-2">
+            {page > 1 && (
+              <Link
+                href={`/admin/students?${new URLSearchParams({ ...(searchParams.q ? { q: searchParams.q } : {}), page: String(page - 1) })}`}
+                className="rounded-lg border border-slate-300 px-3 py-1.5 hover:bg-slate-50"
+              >
+                Précédent
+              </Link>
+            )}
+            {page < totalPages && (
+              <Link
+                href={`/admin/students?${new URLSearchParams({ ...(searchParams.q ? { q: searchParams.q } : {}), page: String(page + 1) })}`}
+                className="rounded-lg border border-slate-300 px-3 py-1.5 hover:bg-slate-50"
+              >
+                Suivant
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

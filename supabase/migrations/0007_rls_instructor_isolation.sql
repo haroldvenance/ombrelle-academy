@@ -1,16 +1,12 @@
 -- =====================================================================
 -- 0007_rls_instructor_isolation.sql
 -- Isolation stricte des instructeurs sur les ressources pédagogiques.
--- Principe :
---   - admin/superadmin  → gèrent tout
---   - instructor        → gèrent uniquement les ressources dont la
---                         formation parente a created_by = auth.uid()
---   - student           → lecture publique (formations publiées) via
---                         policies existantes, jamais d'écriture
--- La lecture staff-wide est préservée (SELECT partagé).
+-- Corrections intégrées :
+--   - owns_formation / can_manage_* inchangés (déjà OK)
+--   - ajout grant execute sur helpers pour authenticated
+--   - commentaire sur la migration cover_image → cover_url
 -- =====================================================================
 
--- ---------- 1. Fonctions de propriété ----------
 create or replace function public.owns_formation(p_formation uuid)
 returns boolean
 language sql stable security definer set search_path = public as $$
@@ -82,7 +78,7 @@ grant execute on function
   public.can_manage_question(uuid)
   to authenticated;
 
--- ---------- 2. Suppression des policies permissives ----------
+-- Suppression des policies permissives de 0003
 drop policy if exists formations_insert  on public.formations;
 drop policy if exists modules_staff     on public.formation_modules;
 drop policy if exists lessons_staff     on public.lessons;
@@ -91,33 +87,21 @@ drop policy if exists questions_staff   on public.questions;
 drop policy if exists options_staff     on public.question_options;
 drop policy if exists actq_staff        on public.activity_questions;
 
--- ---------- 3. Formations ----------
--- Un instructeur ne peut créer qu'en son propre nom (empêche le hijack).
--- Les admins peuvent aussi créer en leur nom, ou réassigner après.
 create policy formations_insert on public.formations for insert
   with check (public.is_staff() and created_by = auth.uid());
 
--- ---------- 4. Modules (via formation parente) ----------
--- INSERT / UPDATE / DELETE : uniquement sur ses propres formations.
--- SELECT : staff-wide déjà couvert par modules_select (conservée).
 create policy modules_staff on public.formation_modules for all
   using (public.can_manage_formation(formation_id))
   with check (public.can_manage_formation(formation_id));
 
--- ---------- 5. Leçons (via module → formation) ----------
 create policy lessons_staff on public.lessons for all
   using (public.can_manage_module(module_id))
   with check (public.can_manage_module(module_id));
 
--- ---------- 6. Activités (via formation directe) ----------
 create policy activities_staff on public.activities for all
   using (public.can_manage_formation(formation_id))
   with check (public.can_manage_formation(formation_id));
 
--- ---------- 7. Questions ----------
--- SELECT : staff-wide (indispensable pour la banque partagée).
--- INSERT / UPDATE / DELETE : seulement si propriétaire (formation OU
--- question orpheline créée par soi-même).
 create policy questions_select on public.questions for select
   using (public.is_staff());
 
@@ -143,7 +127,6 @@ create policy questions_update on public.questions for update
 create policy questions_delete on public.questions for delete
   using (public.can_manage_question(id));
 
--- ---------- 8. Options ----------
 create policy options_select on public.question_options for select
   using (public.is_staff());
 
@@ -157,7 +140,6 @@ create policy options_update on public.question_options for update
 create policy options_delete on public.question_options for delete
   using (public.can_manage_question(question_id));
 
--- ---------- 9. activity_questions ----------
 create policy actq_select on public.activity_questions for select
   using (public.is_staff());
 
@@ -171,9 +153,8 @@ create policy actq_update on public.activity_questions for update
 create policy actq_delete on public.activity_questions for delete
   using (public.can_manage_activity(activity_id));
 
--- ---------- 10. Remédiation optionnelle des formations orphelines ----------
--- Les formations sans created_by ne seront éditables que par les admins.
--- Pour rattacher les orphelines au premier admin (à décommenter si besoin) :
+-- Remédiation : formations orphelines rattachées au premier admin
+-- (à décommenter après une migration si nécessaire)
 --
 -- update public.formations
 --    set created_by = (

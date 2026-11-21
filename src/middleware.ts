@@ -9,10 +9,11 @@ export const config = {
   matcher: [
     /*
      * Exécute le middleware sur toutes les routes SAUF :
+     * - /auth/* (callback Supabase, échange de code OTP : pas besoin de session refresh)
      * - fichiers statiques Next.js (_next/static, _next/image)
      * - ressources publiques (favicon, robots, sitemap, manifest)
      * - fichiers médias (images, polices)
      */
-    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|site.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff2?)$).*)",
+    "/((?!auth/|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|site.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff2?)$).*)",
   ],
 };

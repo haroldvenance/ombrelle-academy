@@ -1,12 +1,10 @@
 -- =====================================================================
 -- 0005_review_session.sql : sessions de révision espacée
--- Deux RPC publiques (SECURITY DEFINER) pour le cycle de révision :
---   - get_review_session()      : liste les questions dues
---   - submit_review_answer()    : corrige + planifie la prochaine + XP
--- Ne PAS accorder update_review_item / award_xp aux clients.
+-- Corrections intégrées :
+--   - FOR UPDATE dans submit_review_answer (évite double update_review_item)
+--   - Idempotence : question déjà révisée → retour propre (skipped), pas d'exception
 -- =====================================================================
 
--- ---------- Lecture : questions à réviser ----------
 create or replace function public.get_review_session(p_limit int default 10)
 returns jsonb
 language plpgsql stable security definer set search_path = public as $$
@@ -17,7 +15,6 @@ declare
 begin
   if v_uid is null then raise exception 'Non authentifié'; end if;
 
-  -- Compte total (avant limite) — utilisé pour afficher "X sur Y"
   select count(*) into v_total
   from public.review_items ri
   join public.questions q on q.id = ri.question_id
@@ -26,7 +23,6 @@ begin
     and ri.next_review_at <= now()
     and q.status = 'published';
 
-  -- Questions limitées et ordonnées par ancienneté de la due date
   select coalesce(jsonb_agg(qd order by due_date asc), '[]'::jsonb) into v_questions
   from (
     select
@@ -58,7 +54,6 @@ begin
   return jsonb_build_object('total_due', v_total, 'questions', v_questions);
 end $$;
 
--- ---------- Écriture : soumettre une réponse ----------
 create or replace function public.submit_review_answer(p_question uuid, p_selected jsonb)
 returns jsonb
 language plpgsql security definer set search_path = public as $$
@@ -76,16 +71,30 @@ declare
 begin
   if v_uid is null then raise exception 'Non authentifié'; end if;
 
-  -- La question doit être due et active
+  -- Lock la ligne pour éviter deux updates concurrents de update_review_item.
   select * into v_ri
   from public.review_items
   where user_id = v_uid and question_id = p_question
-    and status = 'active' and next_review_at <= now();
+    and status = 'active' and next_review_at <= now()
+  for update;
+
   if not found then
+    -- Déjà révisée entre-temps (double onglet, clic en rafale) :
+    -- on renvoie un état propre plutôt qu'une exception.
+    select * into v_new from public.review_items
+    where user_id = v_uid and question_id = p_question;
+    if found then
+      return jsonb_build_object(
+        'skipped', true,
+        'next_review_at', v_new.next_review_at,
+        'mastery_score', v_new.mastery_score,
+        'is_correct', null,
+        'xp_awarded', 0
+      );
+    end if;
     raise exception 'Cette question n''est pas due pour révision';
   end if;
 
-  -- Correction
   select coalesce(array_agg(o.id order by o.id), '{}') into v_cor
   from public.question_options o
   where o.question_id = p_question and o.is_correct;
@@ -97,15 +106,11 @@ begin
 
   select explanation into v_expl from public.questions where id = p_question;
 
-  -- Clé d'idempotence : une seule récompense par cycle de révision
-  -- (le next_review_at AVANT la mise à jour identifie le cycle)
   v_key := 'review:' || v_uid || ':' || p_question || ':'
            || extract(epoch from v_ri.next_review_at)::bigint;
 
-  -- Met à jour le cycle (mastery, repetition, next_review_at)
   perform public.update_review_item(v_uid, p_question, v_ok);
 
-  -- Récompense si correct
   if v_ok then
     v_amt := public.xp_rule('review_passed', 30);
     if public.award_xp(v_uid, v_amt, 'Révision réussie', 'review', p_question, v_key, null) then
@@ -114,7 +119,6 @@ begin
     perform public.touch_streak(v_uid);
   end if;
 
-  -- Récupère le nouvel état
   select * into v_new from public.review_items
   where user_id = v_uid and question_id = p_question;
 
@@ -122,6 +126,7 @@ begin
     jsonb_build_object('question_id', p_question, 'correct', v_ok));
 
   return jsonb_build_object(
+    'skipped', false,
     'is_correct', v_ok,
     'correct_option_ids', to_jsonb(v_cor),
     'selected_option_ids', to_jsonb(v_sel),
@@ -132,7 +137,6 @@ begin
   );
 end $$;
 
--- ---------- Compteur pour le dashboard (cohérence avec get_review_session) ----------
 create or replace function public.get_review_due_count()
 returns int
 language sql stable security definer set search_path = public as $$
@@ -145,7 +149,6 @@ language sql stable security definer set search_path = public as $$
     and q.status = 'published'
 $$;
 
--- ---------- Grants ----------
 revoke all on function public.get_review_session(int)   from public, anon;
 revoke all on function public.submit_review_answer(uuid, jsonb) from public, anon;
 revoke all on function public.get_review_due_count()    from public, anon;

@@ -15,22 +15,27 @@ export function isAdminRole(role: unknown): role is AdminRole {
   return typeof role === "string" && (ADMIN_ROLES as readonly string[]).includes(role);
 }
 
+/**
+ * Pages d'auth publiques : un utilisateur déjà connecté y est redirigé vers
+ * /dashboard. `/reinitialiser` n'est volontairement PAS dans cette liste :
+ * cette page nécessite une session active (issue de l'OTP).
+ */
 export const AUTH_PATHS = [
   "/connexion",
   "/inscription",
   "/mot-de-passe-oublie",
-  "/reset-password",
 ] as const;
 
 export const PROTECTED_PATHS = [
   "/dashboard",
   "/learning",
   "/leaderboard",
-  "/profile",
+  "/profil",
   "/notifications",
   "/admin",
   "/paiement",
-  "/revisions", // à venir (session de révision espacée)
+  "/revisions",
+  "/reinitialiser",
 ] as const;
 
 export const REDIRECT = {
