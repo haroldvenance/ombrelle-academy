@@ -1,9 +1,17 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
-export const metadata: Metadata = { title: "OMBRELLE Academy", description: "Apprenez la finance, l'investissement et l'entrepreneuriat digital par la pratique." };
+export const metadata: Metadata = {
+  title: "OMBRELLE Academy",
+  description: "Apprenez la finance, l'investissement et l'entrepreneuriat digital par la pratique.",
+};
+
 export const viewport: Viewport = { width: "device-width", initialScale: 1 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return <html lang="fr"><body>{children}</body></html>;
+  return (
+    <html lang="fr">
+      <body>{children}</body>
+    </html>
+  );
 }

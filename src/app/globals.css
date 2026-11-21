@@ -4,18 +4,24 @@
 
 @layer base {
   body { @apply bg-slate-50 text-slate-900 antialiased; }
+  :focus-visible { @apply outline-none ring-2 ring-brand-500 ring-offset-2; }
 }
+
 @layer components {
   .btn { @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50; }
   .btn-primary { @apply bg-brand-700 text-white hover:bg-brand-800; }
-  .btn-secondary { @apply border border-slate-200 bg-white text-brand-800 hover:bg-slate-100; }
+  .btn-secondary { @apply border border-slate-200 bg-white text-brand-800 hover:bg-slate-50; }
   .btn-accent { @apply bg-accent-600 text-white hover:bg-accent-700; }
   .btn-danger { @apply bg-red-600 text-white hover:bg-red-700; }
+  .btn-ghost { @apply text-slate-600 hover:bg-slate-100 hover:text-slate-900; }
   .btn-sm { @apply px-3 py-1.5 text-xs; }
+
   .card { @apply rounded-2xl border border-slate-200 bg-white p-5 shadow-sm; }
-  .input { @apply w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-100; }
+
+  .input { @apply w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition-colors placeholder:text-slate-400 focus:border-brand-600 focus:ring-2 focus:ring-brand-100; }
   .label { @apply mb-1 block text-sm font-medium text-slate-700; }
-  .chip { @apply inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700; }
+
+  .chip { @apply inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700; }
   .chip-green { @apply bg-emerald-100 text-emerald-800; }
   .chip-orange { @apply bg-amber-100 text-amber-800; }
   .chip-red { @apply bg-red-100 text-red-800; }

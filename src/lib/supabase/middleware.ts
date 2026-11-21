@@ -1,13 +1,16 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-
-const PROTECTED = ["/dashboard", "/learning", "/leaderboard", "/profile", "/notifications", "/admin", "/paiement"];
+import { env } from "@/lib/env";
+import { AUTH_PATHS, PROTECTED_PATHS, REDIRECT } from "@/lib/constants";
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
-  const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
+
+  const supabase = createServerClient(env.supabaseUrl, env.supabaseAnonKey, {
     cookies: {
-      getAll() { return request.cookies.getAll(); },
+      getAll() {
+        return request.cookies.getAll();
+      },
       setAll(list: { name: string; value: string; options: CookieOptions }[]) {
         list.forEach(({ name, value }) => request.cookies.set(name, value));
         response = NextResponse.next({ request });
@@ -15,19 +18,26 @@ export async function updateSession(request: NextRequest) {
       },
     },
   });
+
   const { data: { user } } = await supabase.auth.getUser();
   const path = request.nextUrl.pathname;
-  if (!user && PROTECTED.some((p) => path === p || path.startsWith(p + "/"))) {
+
+  const isProtected = PROTECTED_PATHS.some((p) => path === p || path.startsWith(p + "/"));
+  const isAuthPage = AUTH_PATHS.some((p) => path === p);
+
+  if (!user && isProtected) {
     const url = request.nextUrl.clone();
-    url.pathname = "/connexion";
+    url.pathname = REDIRECT.login;
     url.search = `?next=${encodeURIComponent(path)}`;
     return NextResponse.redirect(url);
   }
-  if (user && (path === "/connexion" || path === "/inscription")) {
+
+  if (user && isAuthPage) {
     const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
+    url.pathname = REDIRECT.dashboard;
     url.search = "";
     return NextResponse.redirect(url);
   }
+
   return response;
 }

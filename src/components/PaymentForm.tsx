@@ -1,9 +1,12 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Upload, Loader2, CheckCircle2, AlertCircle, Send } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
-export default function PaymentForm({ enrollmentId, userId, defaultAmount }: { enrollmentId: string; userId: string; defaultAmount: number }) {
+export default function PaymentForm({
+  enrollmentId, userId, defaultAmount,
+}: { enrollmentId: string; userId: string; defaultAmount: number }) {
   const router = useRouter();
   const [f, setF] = useState({ amount: String(defaultAmount), method: "Orange Money", reference: "", paid_on: "" });
   const [file, setFile] = useState<File | null>(null);
@@ -11,38 +14,95 @@ export default function PaymentForm({ enrollmentId, userId, defaultAmount }: { e
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   async function submit(e: React.FormEvent) {
-    e.preventDefault(); setBusy(true); setMsg(null);
+    e.preventDefault();
+    setBusy(true);
+    setMsg(null);
     const supabase = createClient();
     let proof: string | null = null;
+
     if (file) {
       const ext = file.name.split(".").pop() ?? "jpg";
       proof = `${userId}/${Date.now()}.${ext}`;
       const up = await supabase.storage.from("payment-proofs").upload(proof, file);
-      if (up.error) { setBusy(false); setMsg({ ok: false, text: up.error.message }); return; }
+      if (up.error) {
+        setBusy(false);
+        setMsg({ ok: false, text: up.error.message });
+        return;
+      }
     }
+
     const { error } = await supabase.rpc("submit_payment", {
-      p_enrollment: enrollmentId, p_amount: Number(f.amount), p_method: f.method, p_reference: f.reference,
-      p_paid_on: f.paid_on || null, p_proof_url: proof,
+      p_enrollment: enrollmentId,
+      p_amount: Number(f.amount),
+      p_method: f.method,
+      p_reference: f.reference,
+      p_paid_on: f.paid_on || null,
+      p_proof_url: proof,
     });
     setBusy(false);
-    if (error) { setMsg({ ok: false, text: error.message }); return; }
+    if (error) {
+      setMsg({ ok: false, text: error.message });
+      return;
+    }
     setMsg({ ok: true, text: "Paiement soumis. Un administrateur va le vérifier." });
-    setF({ ...f, reference: "" }); setFile(null); router.refresh();
+    setF({ ...f, reference: "" });
+    setFile(null);
+    router.refresh();
   }
+
   return (
-    <form onSubmit={submit} className="space-y-3">
+    <form onSubmit={submit} className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2">
-        <div><label className="label">Montant payé</label><input className="input" type="number" min="1" required value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
-        <div><label className="label">Moyen de paiement</label>
+        <div>
+          <label className="label">Montant payé</label>
+          <input className="input" type="number" min="1" required value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} />
+        </div>
+        <div>
+          <label className="label">Moyen de paiement</label>
           <select className="input" value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}>
-            {["Orange Money", "MTN MoMo", "Virement bancaire", "Espèces", "Autre"].map((m) => <option key={m}>{m}</option>)}
-          </select></div>
-        <div><label className="label">Référence de transaction</label><input className="input" required value={f.reference} onChange={(e) => setF({ ...f, reference: e.target.value })} /></div>
-        <div><label className="label">Date du paiement</label><input className="input" type="date" value={f.paid_on} onChange={(e) => setF({ ...f, paid_on: e.target.value })} /></div>
+            {["Orange Money", "MTN MoMo", "Virement bancaire", "Espèces", "Autre"].map((m) => (
+              <option key={m}>{m}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="label">Référence de transaction</label>
+          <input className="input" required value={f.reference} onChange={(e) => setF({ ...f, reference: e.target.value })} placeholder="Ex : MP240101.1234.A56789" />
+        </div>
+        <div>
+          <label className="label">Date du paiement</label>
+          <input className="input" type="date" value={f.paid_on} onChange={(e) => setF({ ...f, paid_on: e.target.value })} />
+        </div>
       </div>
-      <div><label className="label">Capture d&apos;écran (optionnel)</label><input className="input" type="file" accept="image/*,application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></div>
-      <button className="btn btn-primary" disabled={busy}>{busy ? "Envoi…" : "Soumettre ma preuve de paiement"}</button>
-      {msg && <p className={`text-sm ${msg.ok ? "text-emerald-700" : "text-red-600"}`}>{msg.text}</p>}
+
+      <div>
+        <label className="label">Capture d&apos;écran (optionnel)</label>
+        <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">
+          <Upload className="h-4 w-4" />
+          <span className="truncate">{file ? file.name : "Choisir un fichier (image ou PDF)"}</span>
+          <input
+            type="file"
+            accept="image/*,application/pdf"
+            className="hidden"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          />
+        </label>
+      </div>
+
+      <button className="btn btn-primary" disabled={busy}>
+        {busy ? (
+          <><Loader2 className="h-4 w-4 animate-spin" /> Envoi…</>
+        ) : (
+          <><Send className="h-4 w-4" /> Soumettre ma preuve de paiement</>
+        )}
+      </button>
+
+      {msg && (
+        <p className={`flex items-center gap-1.5 text-sm ${msg.ok ? "text-emerald-700" : "text-red-600"}`}>
+          {msg.ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+          {msg.text}
+        </p>
+      )}
     </form>
   );
 }
