@@ -3,24 +3,23 @@ import "./globals.css";
 import { env } from "@/lib/env";
 
 export const metadata: Metadata = {
-  // metadataBase est OBLIGATOIRE. Il permet à Next.js de transformer 
-  // le chemin relatif "/og-image.jpg" en URL absolue (https://.../og-image.jpg)
   metadataBase: new URL(env.siteUrl),
-  
   title: {
     default: "OMBRELLE Academy",
     template: "%s | OMBRELLE Academy",
   },
   description: "Apprenez la finance, l'investissement et l'entrepreneuriat digital par la pratique.",
   
-  // 👇 AJOUT DU LOGO (FAVICON) ICI
+  // 👇 Configuration de vos nouveaux favicons
   icons: {
-    icon: "/logo.jpg",
-    shortcut: "/logo.jpg",
-    apple: "/logo.jpg", // Pour l'icône sur les écrans d'accueil iOS
+    icon: [
+      { url: "/favicon-64.png", sizes: "64x64", type: "image/png" },
+      { url: "/icon.png", sizes: "any", type: "image/png" },
+    ],
+    apple: "/icon.png",
   },
 
-  // Balises pour WhatsApp, Facebook, LinkedIn, Discord...
+  // Open Graph (WhatsApp, Facebook, LinkedIn...)
   openGraph: {
     type: "website",
     locale: "fr_FR",
@@ -38,7 +37,7 @@ export const metadata: Metadata = {
     ],
   },
 
-  // Balises spécifiques pour Twitter / X
+  // Twitter / X
   twitter: {
     card: "summary_large_image",
     title: "OMBRELLE Academy",

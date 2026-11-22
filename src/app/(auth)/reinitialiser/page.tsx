@@ -39,22 +39,17 @@ export default function Reset() {
 
   useEffect(() => {
     let active = true;
-    supabase.auth
-      .getUser()
-      .then(({ data }) => {
-        if (!active) return;
-        if (!data.user) {
-          router.replace("/mot-de-passe-oublie?expired=1");
-          return;
-        }
-        setChecking(false);
-      })
-      .catch(() => {
-        if (active) router.replace("/mot-de-passe-oublie?expired=1");
-      });
-    return () => {
-      active = false;
-    };
+    supabase.auth.getUser().then(({ data }) => {
+      if (!active) return;
+      if (!data.user) {
+        router.replace("/mot-de-passe-oublie?expired=1");
+        return;
+      }
+      setChecking(false);
+    }).catch(() => {
+      if (active) router.replace("/mot-de-passe-oublie?expired=1");
+    });
+    return () => { active = false; };
   }, [router, supabase]);
 
   async function submit(e: React.FormEvent) {
@@ -73,6 +68,7 @@ export default function Reset() {
 
     setBusy(true);
     const { error } = await supabase.auth.updateUser({ password });
+    
     if (error) {
       setBusy(false);
       const m = error.message.toLowerCase();
@@ -86,7 +82,7 @@ export default function Reset() {
       return;
     }
 
-    // Déconnexion des autres sessions (sécurité)
+    // Déconnexion des autres sessions
     await supabase.auth.signOut({ scope: "others" });
 
     setBusy(false);
@@ -115,11 +111,7 @@ export default function Reset() {
       </div>
 
       {error && (
-        <div
-          role="alert"
-          aria-live="polite"
-          className="rounded-lg bg-red-50 p-3 flex items-start gap-2 border border-red-100"
-        >
+        <div role="alert" className="rounded-lg bg-red-50 p-3 flex items-start gap-2 border border-red-100">
           <AlertCircle className="h-4 w-4 text-red-600 mt-0.5 shrink-0" />
           <p className="text-sm text-red-700">{error}</p>
         </div>
@@ -127,14 +119,12 @@ export default function Reset() {
 
       <div className="space-y-4">
         <div>
-          <label htmlFor="reset-password" className="block text-sm font-medium text-slate-700 mb-1">
-            Nouveau mot de passe
-          </label>
+          <label htmlFor="reset-password" className="block text-sm font-medium text-slate-700 mb-1">Nouveau mot de passe</label>
           <div className="relative">
             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <input
               id="reset-password"
-              className="w-full rounded-lg border border-slate-300 pl-10 pr-10 py-2 text-sm focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 transition-colors"
+              className="w-full rounded-lg border border-slate-300 pl-10 pr-10 py-2 text-sm focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600"
               type={showPwd ? "text" : "password"}
               autoComplete="new-password"
               minLength={8}
@@ -148,7 +138,7 @@ export default function Reset() {
               type="button"
               className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
               onClick={() => setShowPwd(!showPwd)}
-              aria-label={showPwd ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+              aria-label={showPwd ? "Masquer" : "Afficher"}
               tabIndex={-1}
             >
               {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -158,12 +148,7 @@ export default function Reset() {
             <div className="mt-2" aria-live="polite">
               <div className="flex gap-1">
                 {[0, 1, 2, 3].map((i) => (
-                  <div
-                    key={i}
-                    className={`h-1 flex-1 rounded ${
-                      i < strength.score ? strength.color : "bg-slate-200"
-                    }`}
-                  />
+                  <div key={i} className={`h-1 flex-1 rounded ${i < strength.score ? strength.color : "bg-slate-200"}`} />
                 ))}
               </div>
               <p className="text-xs text-slate-500 mt-1">Force : {strength.label}</p>
@@ -172,14 +157,12 @@ export default function Reset() {
         </div>
 
         <div>
-          <label htmlFor="reset-confirm" className="block text-sm font-medium text-slate-700 mb-1">
-            Confirmer le mot de passe
-          </label>
+          <label htmlFor="reset-confirm" className="block text-sm font-medium text-slate-700 mb-1">Confirmer le mot de passe</label>
           <div className="relative">
             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <input
               id="reset-confirm"
-              className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-2 text-sm focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 transition-colors"
+              className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-2 text-sm focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600"
               type={showPwd ? "text" : "password"}
               autoComplete="new-password"
               minLength={8}
@@ -209,13 +192,7 @@ export default function Reset() {
         disabled={busy || password.length < 8 || password !== confirm}
         className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
       >
-        {busy ? (
-          <>
-            <Loader2 className="h-4 w-4 animate-spin" /> Enregistrement...
-          </>
-        ) : (
-          "Enregistrer le mot de passe"
-        )}
+        {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Enregistrement...</> : "Enregistrer le mot de passe"}
       </button>
 
       <p className="text-xs text-slate-500 text-center">

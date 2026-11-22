@@ -13,6 +13,7 @@ import {
   Eye,
   EyeOff,
   RotateCcw,
+  KeyRound,
 } from "lucide-react";
 
 const TURNSTILE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
@@ -74,11 +75,12 @@ declare global {
 export default function Register() {
   const router = useRouter();
   const [f, setF] = useState({ name: "", email: "", password: "" });
+  const [otpCode, setOtpCode] = useState("");
+  const [showOtpStep, setShowOtpStep] = useState(false);
   const [showPwd, setShowPwd] = useState(false);
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [resending, setResending] = useState(false);
   const [cooldown, setCooldown] = useState(0);
@@ -104,7 +106,7 @@ export default function Register() {
 
   // Charge Turnstile si la clé est définie
   useEffect(() => {
-    if (!TURNSTILE_KEY) return;
+    if (!TURNSTILE_KEY || showOtpStep) return;
     const script = document.createElement("script");
     script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js";
     script.async = true;
@@ -125,7 +127,7 @@ export default function Register() {
     return () => {
       script.remove();
     };
-  }, []);
+  }, [showOtpStep]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -146,17 +148,12 @@ export default function Register() {
     }
 
     setBusy(true);
-    // window.location.origin = bon choix pour un composant "use client" :
-    // toujours l'origine exacte sur laquelle l'utilisateur se trouve
-    // (prod, preview, ou custom domain), sans dépendre de variables figées au build.
-    const redirectTo = `${window.location.origin}/auth/callback?next=/dashboard`;
 
     const { data, error } = await createClient().auth.signUp({
       email: f.email.trim(),
       password: f.password,
       options: {
         data: { full_name: f.name.trim() },
-        emailRedirectTo: redirectTo,
         ...(captchaToken ? { captchaToken } : {}),
       },
     });
@@ -167,14 +164,44 @@ export default function Register() {
       return;
     }
 
+    // Si la confirmation d'email est activée sur Supabase, data.session sera null
     if (data.session) {
       window.location.href = "/dashboard";
     } else {
-      setInfo(
-        "Un email de confirmation vous a été envoyé. Cliquez sur le lien pour activer votre compte."
-      );
+      // On passe à l'écran OTP
+      setShowOtpStep(true);
       setCooldown(60);
     }
+  }
+
+  async function verifySignupOtp(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy || otpCode.length < 6) return;
+
+    setBusy(true);
+    setError(null);
+
+    const { error } = await createClient().auth.verifyOtp({
+      email: f.email.trim(),
+      token: otpCode.trim(),
+      type: "signup",
+    });
+
+    setBusy(false);
+
+    if (error) {
+      const m = error.message.toLowerCase();
+      if (m.includes("expired")) {
+        setError("Ce code a expiré. Cliquez sur « Renvoyer le code ».");
+      } else if (m.includes("invalid") || m.includes("token") || m.includes("otp")) {
+        setError("Code incorrect. Vérifiez les 6 chiffres reçus par email.");
+      } else {
+        setError(error.message);
+      }
+      return;
+    }
+
+    window.location.href = "/dashboard";
   }
 
   async function resend() {
@@ -182,12 +209,9 @@ export default function Register() {
     setResending(true);
     setError(null);
 
-    const redirectTo = `${window.location.origin}/auth/callback?next=/dashboard`;
-
     const { error } = await createClient().auth.resend({
       type: "signup",
       email: f.email.trim(),
-      options: { emailRedirectTo: redirectTo },
     });
 
     setResending(false);
@@ -203,58 +227,82 @@ export default function Register() {
     setCooldown(60);
   }
 
-  if (info) {
+  if (showOtpStep) {
     return (
-      <div className="space-y-6 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100">
-          <CheckCircle2 className="h-6 w-6 text-emerald-600" />
-        </div>
+      <form onSubmit={verifySignupOtp} className="space-y-6" aria-busy={busy}>
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">
-            Vérifiez votre boîte mail
-          </h2>
-          <p className="text-sm text-slate-600 mt-2 break-all">{info}</p>
+          <div className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-indigo-50 mb-3">
+            <CheckCircle2 className="h-5 w-5 text-indigo-600" />
+          </div>
+          <h1 className="text-xl font-semibold text-slate-900">Vérifiez votre email</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Un code à 6 chiffres a été envoyé à <strong>{f.email}</strong>.
+          </p>
         </div>
+
         {error && (
-          <div
-            role="alert"
-            className="rounded-lg bg-red-50 p-3 border border-red-100 text-left"
-          >
+          <div role="alert" className="rounded-lg bg-red-50 p-3 flex items-start gap-2 border border-red-100">
+            <AlertCircle className="h-4 w-4 text-red-600 mt-0.5 shrink-0" />
             <p className="text-sm text-red-700">{error}</p>
           </div>
         )}
-        <div className="flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={resend}
-            disabled={resending || cooldown > 0}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors"
-          >
-            {resending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RotateCcw className="h-4 w-4" />
-            )}
-            {cooldown > 0 ? `Renvoyer dans ${cooldown}s` : "Renvoyer l'email"}
-          </button>
+
+        <div>
+          <label htmlFor="signup-otp" className="block text-sm font-medium text-slate-700 mb-1">
+            Code de vérification
+          </label>
+          <div className="relative">
+            <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <input
+              id="signup-otp"
+              className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-3 text-lg font-mono tracking-[0.4em] text-center focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 transition-colors"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={6}
+              autoComplete="one-time-code"
+              required
+              placeholder="000000"
+              value={otpCode}
+              onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              disabled={busy}
+              autoFocus
+            />
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          disabled={busy || otpCode.length < 6}
+          className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+        >
+          {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Vérification...</> : "Valider mon compte"}
+        </button>
+
+        <div className="flex items-center justify-between gap-2 pt-2 text-sm">
           <button
             type="button"
             onClick={() => {
-              setInfo(null);
+              setShowOtpStep(false);
+              setOtpCode("");
               setError(null);
             }}
-            className="text-sm text-slate-500 hover:text-slate-800"
+            className="text-slate-500 hover:text-slate-800"
+            disabled={busy}
           >
-            Modifier l&apos;adresse email
+            Modifier l'adresse email
           </button>
-          <Link
-            href="/connexion"
-            className="w-full inline-flex justify-center rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 transition-colors"
+          <button
+            type="button"
+            onClick={resend}
+            disabled={resending || cooldown > 0 || busy}
+            className="text-indigo-600 hover:text-indigo-500 inline-flex items-center gap-1 disabled:opacity-50"
           >
-            Aller à la connexion
-          </Link>
+            {resending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+            {cooldown > 0 ? `Renvoyer dans ${cooldown}s` : "Renvoyer le code"}
+          </button>
         </div>
-      </div>
+      </form>
     );
   }
 
@@ -268,11 +316,7 @@ export default function Register() {
       </div>
 
       {error && (
-        <div
-          role="alert"
-          aria-live="polite"
-          className="rounded-lg bg-red-50 p-3 flex items-start gap-2 border border-red-100"
-        >
+        <div role="alert" className="rounded-lg bg-red-50 p-3 flex items-start gap-2 border border-red-100">
           <AlertCircle className="h-4 w-4 text-red-600 mt-0.5 shrink-0" />
           <p className="text-sm text-red-700">{error}</p>
         </div>
@@ -280,17 +324,12 @@ export default function Register() {
 
       <div className="space-y-4">
         <div>
-          <label
-            htmlFor="reg-name"
-            className="block text-sm font-medium text-slate-700 mb-1"
-          >
-            Nom complet
-          </label>
+          <label htmlFor="reg-name" className="block text-sm font-medium text-slate-700 mb-1">Nom complet</label>
           <div className="relative">
             <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <input
               id="reg-name"
-              className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-2 text-sm focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 transition-colors"
+              className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-2 text-sm focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600"
               autoComplete="name"
               required
               placeholder="Jean Dupont"
@@ -302,17 +341,12 @@ export default function Register() {
         </div>
 
         <div>
-          <label
-            htmlFor="reg-email"
-            className="block text-sm font-medium text-slate-700 mb-1"
-          >
-            Adresse email
-          </label>
+          <label htmlFor="reg-email" className="block text-sm font-medium text-slate-700 mb-1">Adresse email</label>
           <div className="relative">
             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <input
               id="reg-email"
-              className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-2 text-sm focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 transition-colors"
+              className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-2 text-sm focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600"
               type="email"
               autoComplete="email"
               required
@@ -325,17 +359,12 @@ export default function Register() {
         </div>
 
         <div>
-          <label
-            htmlFor="reg-password"
-            className="block text-sm font-medium text-slate-700 mb-1"
-          >
-            Mot de passe
-          </label>
+          <label htmlFor="reg-password" className="block text-sm font-medium text-slate-700 mb-1">Mot de passe</label>
           <div className="relative">
             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <input
               id="reg-password"
-              className="w-full rounded-lg border border-slate-300 pl-10 pr-10 py-2 text-sm focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 transition-colors"
+              className="w-full rounded-lg border border-slate-300 pl-10 pr-10 py-2 text-sm focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600"
               type={showPwd ? "text" : "password"}
               autoComplete="new-password"
               minLength={8}
@@ -349,41 +378,25 @@ export default function Register() {
               type="button"
               className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
               onClick={() => setShowPwd(!showPwd)}
-              aria-label={
-                showPwd ? "Masquer le mot de passe" : "Afficher le mot de passe"
-              }
               tabIndex={-1}
             >
-              {showPwd ? (
-                <EyeOff className="h-4 w-4" />
-              ) : (
-                <Eye className="h-4 w-4" />
-              )}
+              {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
           {f.password && (
             <div className="mt-2" aria-live="polite">
               <div className="flex gap-1">
                 {[0, 1, 2, 3].map((i) => (
-                  <div
-                    key={i}
-                    className={`h-1 flex-1 rounded ${
-                      i < strength.score ? strength.color : "bg-slate-200"
-                    }`}
-                  />
+                  <div key={i} className={`h-1 flex-1 rounded ${i < strength.score ? strength.color : "bg-slate-200"}`} />
                 ))}
               </div>
-              <p className="text-xs text-slate-500 mt-1">
-                Force : {strength.label}
-              </p>
+              <p className="text-xs text-slate-500 mt-1">Force : {strength.label}</p>
             </div>
           )}
         </div>
       </div>
 
-      {TURNSTILE_KEY && (
-        <div id="turnstile-widget" className="flex justify-center" />
-      )}
+      {TURNSTILE_KEY && <div id="turnstile-widget" className="flex justify-center" />}
 
       <label className="flex items-start gap-2 text-sm text-slate-700 cursor-pointer">
         <input
@@ -394,23 +407,7 @@ export default function Register() {
           required
         />
         <span>
-          J&apos;accepte les{" "}
-          <Link
-            href="/cgu"
-            className="text-indigo-600 underline"
-            target="_blank"
-          >
-            conditions générales d&apos;utilisation
-          </Link>{" "}
-          et la{" "}
-          <Link
-            href="/confidentialite"
-            className="text-indigo-600 underline"
-            target="_blank"
-          >
-            politique de confidentialité
-          </Link>
-          .
+          J&apos;accepte les <Link href="/cgu" className="text-indigo-600 underline" target="_blank">conditions générales</Link> et la <Link href="/confidentialite" className="text-indigo-600 underline" target="_blank">politique de confidentialité</Link>.
         </span>
       </label>
 
@@ -419,23 +416,11 @@ export default function Register() {
         className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
         disabled={busy || !acceptTerms}
       >
-        {busy ? (
-          <>
-            <Loader2 className="h-4 w-4 animate-spin" /> Création...
-          </>
-        ) : (
-          "Créer mon compte"
-        )}
+        {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Création...</> : "Créer mon compte"}
       </button>
 
       <p className="text-center text-sm text-slate-600">
-        Déjà inscrit ?{" "}
-        <Link
-          className="font-medium text-indigo-600 hover:text-indigo-500 transition-colors"
-          href="/connexion"
-        >
-          Se connecter
-        </Link>
+        Déjà inscrit ? <Link className="font-medium text-indigo-600 hover:text-indigo-500" href="/connexion">Se connecter</Link>
       </p>
     </form>
   );
