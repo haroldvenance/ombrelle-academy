@@ -124,7 +124,7 @@ export default function Register() {
 
   async function verifySignupOtp(e: React.FormEvent) {
     e.preventDefault();
-    if (busy || otpCode.length < 6) return;
+    if (busy || otpCode.length < 8) return; // <--- CORRIGÉ À 8
 
     setBusy(true);
     setError(null);
@@ -132,7 +132,7 @@ export default function Register() {
     const { error } = await createClient().auth.verifyOtp({
       email: f.email.trim(),
       token: otpCode.trim(),
-      type: "signup", // <--- CRUCIAL ICI
+      type: "signup",
     });
 
     setBusy(false);
@@ -142,7 +142,7 @@ export default function Register() {
       if (m.includes("expired")) {
         setError("Ce code a expiré. Cliquez sur « Renvoyer le code ».");
       } else if (m.includes("invalid") || m.includes("token") || m.includes("otp")) {
-        setError("Code incorrect. Vérifiez les 6 chiffres reçus par email.");
+        setError("Code incorrect. Vérifiez les 8 chiffres reçus par email.");
       } else {
         setError(error.message);
       }
@@ -180,7 +180,7 @@ export default function Register() {
           </div>
           <h1 className="text-xl font-semibold text-slate-900">Vérifiez votre email</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Un code à 6 chiffres a été envoyé à <strong>{f.email}</strong>.
+            Un code à 8 chiffres a été envoyé à <strong>{f.email}</strong>. {/* <--- CORRIGÉ */}
           </p>
         </div>
 
@@ -201,19 +201,19 @@ export default function Register() {
               type="text"
               inputMode="numeric"
               pattern="[0-9]*"
-              maxLength={6}
+              maxLength={8} // <--- CORRIGÉ À 8
               autoComplete="one-time-code"
               required
-              placeholder="000000"
+              placeholder="00000000" // <--- CORRIGÉ
               value={otpCode}
-              onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 8))} // <--- CORRIGÉ À 8
               disabled={busy}
               autoFocus
             />
           </div>
         </div>
 
-        <button type="submit" disabled={busy || otpCode.length < 6} className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+        <button type="submit" disabled={busy || otpCode.length < 8} className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
           {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Vérification...</> : "Valider mon compte"}
         </button>
 
@@ -232,7 +232,6 @@ export default function Register() {
 
   return (
     <form onSubmit={submit} className="space-y-6" aria-busy={busy}>
-      {/* ... Reste du formulaire d'inscription (inchangé) ... */}
       <div>
         <h1 className="text-xl font-semibold text-slate-900">Créer un compte</h1>
         <p className="text-sm text-slate-500 mt-1">Rejoignez OMBRELLE Academy et commencez à apprendre.</p>

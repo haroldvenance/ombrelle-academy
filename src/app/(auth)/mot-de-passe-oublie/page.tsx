@@ -38,7 +38,6 @@ export default function Forgot() {
     setBusy(true);
     setError(null);
 
-    // 1. Demande l'envoi du code OTP
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
 
     setBusy(false);
@@ -70,23 +69,22 @@ export default function Forgot() {
 
   async function verifyCode(e: React.FormEvent) {
     e.preventDefault();
-    if (busy || code.trim().length < 6) return;
+    if (busy || code.trim().length < 8) return; // <--- CORRIGÉ À 8
 
     setBusy(true);
     setError(null);
 
-    // 2. Vérifie le code avec le type 'recovery'
     const { error } = await supabase.auth.verifyOtp({
       email: email.trim(),
       token: code.trim(),
-      type: "recovery", // <--- CRUCIAL ICI
+      type: "recovery",
     });
 
     setBusy(false);
     if (error) {
       const m = error.message.toLowerCase();
       if (m.includes("expired")) { setError("Ce code a expiré. Cliquez sur « Renvoyer un code »."); } 
-      else if (m.includes("invalid") || m.includes("token") || m.includes("otp")) { setError("Code incorrect. Vérifiez les 6 chiffres reçus par email."); } 
+      else if (m.includes("invalid") || m.includes("token") || m.includes("otp")) { setError("Code incorrect. Vérifiez les 8 chiffres reçus par email."); } 
       else { setError(error.message); }
       return;
     }
@@ -103,7 +101,7 @@ export default function Forgot() {
         </Link>
         <h1 className="text-xl font-semibold text-slate-900">Mot de passe oublié</h1>
         <p className="text-sm text-slate-500 mt-1">
-          {step === "email" ? "Entrez votre email pour recevoir un code." : "Saisissez le code à 6 chiffres reçu par email."}
+          {step === "email" ? "Entrez votre email pour recevoir un code." : "Saisissez le code à 8 chiffres reçu par email."} {/* <--- CORRIGÉ */}
         </p>
       </div>
 
@@ -133,10 +131,10 @@ export default function Forgot() {
             <label htmlFor="forgot-code" className="block text-sm font-medium text-slate-700 mb-1">Code de vérification</label>
             <div className="relative">
               <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-              <input id="forgot-code" className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-3 text-lg font-mono tracking-[0.4em] text-center focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600" type="text" inputMode="numeric" pattern="[0-9]*" maxLength={6} autoComplete="one-time-code" required placeholder="000000" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} disabled={busy} autoFocus />
+              <input id="forgot-code" className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-3 text-lg font-mono tracking-[0.4em] text-center focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600" type="text" inputMode="numeric" pattern="[0-9]*" maxLength={8} autoComplete="one-time-code" required placeholder="00000000" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 8))} disabled={busy} autoFocus /> {/* <--- CORRIGÉ À 8 */}
             </div>
           </div>
-          <button type="submit" disabled={busy || code.length < 6} className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
+          <button type="submit" disabled={busy || code.length < 8} className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"> {/* <--- CORRIGÉ À 8 */}
             {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Vérification...</> : "Vérifier le code"}
           </button>
           <div className="flex items-center justify-between gap-2 pt-2 text-sm">
