@@ -13,6 +13,13 @@ export const metadata: Metadata = {
   },
   description: "Apprenez la finance, l'investissement et l'entrepreneuriat digital par la pratique.",
   
+  // 👇 AJOUT DU LOGO (FAVICON) ICI
+  icons: {
+    icon: "/logo.jpg",
+    shortcut: "/logo.jpg",
+    apple: "/logo.jpg", // Pour l'icône sur les écrans d'accueil iOS
+  },
+
   // Balises pour WhatsApp, Facebook, LinkedIn, Discord...
   openGraph: {
     type: "website",
