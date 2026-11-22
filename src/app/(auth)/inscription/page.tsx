@@ -17,7 +17,11 @@ import {
 
 const TURNSTILE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
-function passwordScore(pwd: string): { score: 0 | 1 | 2 | 3 | 4; label: string; color: string } {
+function passwordScore(pwd: string): {
+  score: 0 | 1 | 2 | 3 | 4;
+  label: string;
+  color: string;
+} {
   let s = 0;
   if (pwd.length >= 8) s++;
   if (pwd.length >= 12) s++;
@@ -25,17 +29,29 @@ function passwordScore(pwd: string): { score: 0 | 1 | 2 | 3 | 4; label: string; 
   if (/[0-9]/.test(pwd) && /[^A-Za-z0-9]/.test(pwd)) s++;
   const score = Math.min(4, s) as 0 | 1 | 2 | 3 | 4;
   const label = ["Très faible", "Faible", "Moyen", "Bon", "Excellent"][score];
-  const color = ["bg-red-500", "bg-orange-500", "bg-amber-500", "bg-emerald-500", "bg-emerald-600"][score];
+  const color = [
+    "bg-red-500",
+    "bg-orange-500",
+    "bg-amber-500",
+    "bg-emerald-500",
+    "bg-emerald-600",
+  ][score];
   return { score, label, color };
 }
 
 function mapError(message: string, status?: number): string {
   const m = message.toLowerCase();
-  if (status === 429 || m.includes("rate limit")) return "Trop de tentatives. Réessayez dans quelques minutes.";
-  if (m.includes("already registered") || m.includes("already exists") || m.includes("user already"))
+  if (status === 429 || m.includes("rate limit"))
+    return "Trop de tentatives. Réessayez dans quelques minutes.";
+  if (
+    m.includes("already registered") ||
+    m.includes("already exists") ||
+    m.includes("user already")
+  )
     return "Cet email est déjà utilisé. Essayez de vous connecter.";
   if (m.includes("invalid email")) return "Format d'email invalide.";
-  if (m.includes("password")) return "Le mot de passe ne respecte pas les critères de sécurité.";
+  if (m.includes("password"))
+    return "Le mot de passe ne respecte pas les critères de sécurité.";
   return message;
 }
 
@@ -44,7 +60,11 @@ declare global {
     turnstile?: {
       render: (
         el: HTMLElement,
-        opts: { sitekey: string; callback: (token: string) => void; theme?: string }
+        opts: {
+          sitekey: string;
+          callback: (token: string) => void;
+          theme?: string;
+        }
       ) => string;
       remove: (id: string) => void;
     };
@@ -126,12 +146,17 @@ export default function Register() {
     }
 
     setBusy(true);
+    // window.location.origin = bon choix pour un composant "use client" :
+    // toujours l'origine exacte sur laquelle l'utilisateur se trouve
+    // (prod, preview, ou custom domain), sans dépendre de variables figées au build.
+    const redirectTo = `${window.location.origin}/auth/callback?next=/dashboard`;
+
     const { data, error } = await createClient().auth.signUp({
       email: f.email.trim(),
       password: f.password,
       options: {
         data: { full_name: f.name.trim() },
-        emailRedirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
+        emailRedirectTo: redirectTo,
         ...(captchaToken ? { captchaToken } : {}),
       },
     });
@@ -157,12 +182,12 @@ export default function Register() {
     setResending(true);
     setError(null);
 
+    const redirectTo = `${window.location.origin}/auth/callback?next=/dashboard`;
+
     const { error } = await createClient().auth.resend({
       type: "signup",
       email: f.email.trim(),
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
-      },
+      options: { emailRedirectTo: redirectTo },
     });
 
     setResending(false);
@@ -185,11 +210,16 @@ export default function Register() {
           <CheckCircle2 className="h-6 w-6 text-emerald-600" />
         </div>
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Vérifiez votre boîte mail</h2>
+          <h2 className="text-lg font-semibold text-slate-900">
+            Vérifiez votre boîte mail
+          </h2>
           <p className="text-sm text-slate-600 mt-2 break-all">{info}</p>
         </div>
         {error && (
-          <div role="alert" className="rounded-lg bg-red-50 p-3 border border-red-100 text-left">
+          <div
+            role="alert"
+            className="rounded-lg bg-red-50 p-3 border border-red-100 text-left"
+          >
             <p className="text-sm text-red-700">{error}</p>
           </div>
         )}
@@ -215,7 +245,7 @@ export default function Register() {
             }}
             className="text-sm text-slate-500 hover:text-slate-800"
           >
-            Modifier l'adresse email
+            Modifier l&apos;adresse email
           </button>
           <Link
             href="/connexion"
@@ -250,7 +280,10 @@ export default function Register() {
 
       <div className="space-y-4">
         <div>
-          <label htmlFor="reg-name" className="block text-sm font-medium text-slate-700 mb-1">
+          <label
+            htmlFor="reg-name"
+            className="block text-sm font-medium text-slate-700 mb-1"
+          >
             Nom complet
           </label>
           <div className="relative">
@@ -269,7 +302,10 @@ export default function Register() {
         </div>
 
         <div>
-          <label htmlFor="reg-email" className="block text-sm font-medium text-slate-700 mb-1">
+          <label
+            htmlFor="reg-email"
+            className="block text-sm font-medium text-slate-700 mb-1"
+          >
             Adresse email
           </label>
           <div className="relative">
@@ -289,7 +325,10 @@ export default function Register() {
         </div>
 
         <div>
-          <label htmlFor="reg-password" className="block text-sm font-medium text-slate-700 mb-1">
+          <label
+            htmlFor="reg-password"
+            className="block text-sm font-medium text-slate-700 mb-1"
+          >
             Mot de passe
           </label>
           <div className="relative">
@@ -310,10 +349,16 @@ export default function Register() {
               type="button"
               className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
               onClick={() => setShowPwd(!showPwd)}
-              aria-label={showPwd ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+              aria-label={
+                showPwd ? "Masquer le mot de passe" : "Afficher le mot de passe"
+              }
               tabIndex={-1}
             >
-              {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              {showPwd ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
             </button>
           </div>
           {f.password && (
@@ -328,7 +373,9 @@ export default function Register() {
                   />
                 ))}
               </div>
-              <p className="text-xs text-slate-500 mt-1">Force : {strength.label}</p>
+              <p className="text-xs text-slate-500 mt-1">
+                Force : {strength.label}
+              </p>
             </div>
           )}
         </div>
@@ -347,12 +394,20 @@ export default function Register() {
           required
         />
         <span>
-          J'accepte les{" "}
-          <Link href="/cgu" className="text-indigo-600 underline" target="_blank">
-            conditions générales d'utilisation
+          J&apos;accepte les{" "}
+          <Link
+            href="/cgu"
+            className="text-indigo-600 underline"
+            target="_blank"
+          >
+            conditions générales d&apos;utilisation
           </Link>{" "}
           et la{" "}
-          <Link href="/confidentialite" className="text-indigo-600 underline" target="_blank">
+          <Link
+            href="/confidentialite"
+            className="text-indigo-600 underline"
+            target="_blank"
+          >
             politique de confidentialité
           </Link>
           .
